@@ -79,10 +79,17 @@ mod tests {
 
     #[test]
     fn rollup_takes_the_worst_non_skip() {
-        let cs = [Check::pass("a", ""), Check::skip("b", ""), Check::warn("c", "")];
+        let cs = [
+            Check::pass("a", ""),
+            Check::skip("b", ""),
+            Check::warn("c", ""),
+        ];
         assert_eq!(rollup(&cs), Status::Warn);
         assert_eq!(rollup(&[Check::skip("a", "")]), Status::Skip);
-        assert_eq!(rollup(&[Check::fail("a", ""), Check::pass("b", "")]), Status::Fail);
+        assert_eq!(
+            rollup(&[Check::fail("a", ""), Check::pass("b", "")]),
+            Status::Fail
+        );
         assert_eq!(rollup(&[]), Status::Pass);
     }
 }

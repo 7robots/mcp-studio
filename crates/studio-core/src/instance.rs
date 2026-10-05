@@ -35,7 +35,10 @@ pub enum InstanceError {
         message: String,
     },
     #[error("{path} is invalid:\n{}", problems.iter().map(|p| format!("  - {p}")).collect::<Vec<_>>().join("\n"))]
-    Invalid { path: String, problems: Vec<Problem> },
+    Invalid {
+        path: String,
+        problems: Vec<Problem>,
+    },
 }
 
 /// The user-level config: which instance to use when none is named.
@@ -152,7 +155,9 @@ impl Instance {
             });
         match explicit {
             Some(p) => self.path(&p),
-            None => self.path(&self.config.fleet.repos_dir).join(repo_name(repo)),
+            None => self
+                .path(&self.config.fleet.repos_dir)
+                .join(repo_name(repo)),
         }
     }
 
@@ -183,10 +188,7 @@ impl Instance {
 
 fn parse_toml<T: serde::de::DeserializeOwned>(path: &Path, text: &str) -> Result<T, InstanceError> {
     toml::from_str(text).map_err(|e| {
-        let (line, col) = e
-            .span()
-            .map(|s| line_col(text, s.start))
-            .unwrap_or((0, 0));
+        let (line, col) = e.span().map(|s| line_col(text, s.start)).unwrap_or((0, 0));
         InstanceError::Parse {
             path: path.display().to_string(),
             line,
@@ -227,7 +229,11 @@ mod tests {
     #[test]
     fn parse_errors_carry_line_and_column() {
         let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), CONFIG_FILE, "[instance]\nname = \"x\"\n\n[github]\nacount = \"x\"\n");
+        write(
+            dir.path(),
+            CONFIG_FILE,
+            "[instance]\nname = \"x\"\n\n[github]\nacount = \"x\"\n",
+        );
         let e = Instance::load(dir.path()).unwrap_err().to_string();
         assert!(e.contains("studio.toml:5:1"), "{e}");
         assert!(e.contains("acount"), "{e}");
@@ -242,12 +248,18 @@ mod tests {
             "[instance]\nname = \"X Y\"\n[[gateway]]\nid = \"g\"\nurl = \"ftp://x\"\n",
         );
         let e = Instance::load(dir.path()).unwrap_err().to_string();
-        assert!(e.contains("instance.name") && e.contains("gateway[0].url"), "{e}");
+        assert!(
+            e.contains("instance.name") && e.contains("gateway[0].url"),
+            "{e}"
+        );
     }
 
     #[test]
     fn cli_path_wins() {
-        assert_eq!(locate(Some(Path::new("/x/y"))).unwrap(), PathBuf::from("/x/y"));
+        assert_eq!(
+            locate(Some(Path::new("/x/y"))).unwrap(),
+            PathBuf::from("/x/y")
+        );
     }
 
     #[test]

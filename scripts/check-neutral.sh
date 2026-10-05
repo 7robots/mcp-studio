@@ -22,7 +22,7 @@ for inst in "$@"; do
 done | grep -vE '^(mcp-gateway|cf-workers-ts|pattern-values\.toml|conformance(\.json)?|mcp-server|okta-api|resolve|default|main|auto|claude|codex|Employee)$' \
      | awk 'length >= 4' | sort -u > "$patterns"
 hits="$(cd "$root" && git ls-files -co --exclude-standard \
-  | grep -vE '^(examples/|scripts/check-neutral\.sh$|Cargo\.lock$)' \
+  | grep -vE '^(examples/|scripts/check-neutral\.sh$|Cargo\.lock$|LICENSE$)' \
   | xargs grep -n -i -F -f "$patterns" 2>/dev/null \
   | grep -vE 'github\.com/[^/]+/mcp-studio' || true)"
 if [ -n "$hits" ]; then

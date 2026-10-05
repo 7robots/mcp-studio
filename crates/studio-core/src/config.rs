@@ -413,12 +413,15 @@ impl StudioConfig {
         };
 
         if !is_slug(&self.instance.name) {
-            p("instance.name".into(), "must be a lowercase slug ([a-z0-9-])");
+            p(
+                "instance.name".into(),
+                "must be a lowercase slug ([a-z0-9-])",
+            );
         }
-        if let Some(okta) = &self.identity.okta {
-            if !is_https(&okta.domain) {
-                p("identity.okta.domain".into(), "must be an https:// URL");
-            }
+        if let Some(okta) = &self.identity.okta
+            && !is_https(&okta.domain)
+        {
+            p("identity.okta.domain".into(), "must be an https:// URL");
         }
 
         let mut ids = BTreeSet::new();
@@ -428,16 +431,25 @@ impl StudioConfig {
                 p(format!("{at}.id"), "duplicate gateway id");
             }
             if !is_https_or_loopback(&g.url) {
-                p(format!("{at}.url"), "must be https:// (http:// only for loopback)");
+                p(
+                    format!("{at}.url"),
+                    "must be https:// (http:// only for loopback)",
+                );
             }
-            if let Some(r) = &g.repo {
-                if !is_repo(r) {
-                    p(format!("{at}.repo"), "must be owner/repo");
-                }
+            if let Some(r) = &g.repo
+                && !is_repo(r)
+            {
+                p(format!("{at}.repo"), "must be owner/repo");
             }
         }
 
-        for (i, r) in self.fleet.include.iter().chain(&self.fleet.exclude).enumerate() {
+        for (i, r) in self
+            .fleet
+            .include
+            .iter()
+            .chain(&self.fleet.exclude)
+            .enumerate()
+        {
             if !is_repo(r) {
                 p(format!("fleet.include/exclude[{i}]"), "must be owner/repo");
             }
@@ -451,15 +463,15 @@ impl StudioConfig {
             if !repos.insert(s.repo.to_ascii_lowercase()) {
                 p(format!("{at}.repo"), "duplicate server");
             }
-            if let Some(g) = &s.gateway {
-                if self.gateway(Some(g)).is_none() {
-                    p(format!("{at}.gateway"), "names no [[gateway]]");
-                }
+            if let Some(g) = &s.gateway
+                && self.gateway(Some(g)).is_none()
+            {
+                p(format!("{at}.gateway"), "names no [[gateway]]");
             }
-            if let Some(u) = &s.url {
-                if !is_https(u) {
-                    p(format!("{at}.url"), "must be an https:// URL");
-                }
+            if let Some(u) = &s.url
+                && !is_https(u)
+            {
+                p(format!("{at}.url"), "must be an https:// URL");
             }
         }
 
@@ -473,7 +485,10 @@ impl StudioConfig {
                 p(format!("{at}.repo"), "must be owner/repo");
             }
             if m.targets.is_empty() {
-                p(format!("{at}.targets"), "needs at least one of claude, codex");
+                p(
+                    format!("{at}.targets"),
+                    "needs at least one of claude, codex",
+                );
             }
             if !is_slug(m.catalog_name()) {
                 p(format!("{at}.catalog_name"), "must be a lowercase slug");
@@ -504,10 +519,9 @@ pub fn is_https(s: &str) -> bool {
 pub fn is_https_or_loopback(s: &str) -> bool {
     match url::Url::parse(s) {
         Ok(u) if u.scheme() == "https" => u.host().is_some(),
-        Ok(u) if u.scheme() == "http" => matches!(
-            u.host_str(),
-            Some("localhost" | "127.0.0.1" | "[::1]")
-        ),
+        Ok(u) if u.scheme() == "http" => {
+            matches!(u.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
+        }
         _ => false,
     }
 }
@@ -617,7 +631,10 @@ targets = []
     #[test]
     fn paths_resolve_against_the_instance() {
         let base = Path::new("/inst");
-        assert_eq!(resolve_path(base, Path::new("conformance")), PathBuf::from("/inst/conformance"));
+        assert_eq!(
+            resolve_path(base, Path::new("conformance")),
+            PathBuf::from("/inst/conformance")
+        );
         assert_eq!(resolve_path(base, Path::new("/abs")), PathBuf::from("/abs"));
     }
 }

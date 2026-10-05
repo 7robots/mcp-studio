@@ -35,22 +35,24 @@ pub fn run(program: &str, args: &[&str], cwd: Option<&Path>) -> Result<String, E
 /// `GH_TOKEN`/`GITHUB_TOKEN` win when set, so CI and tests need no `gh`.
 pub fn github_token(account: Option<&str>) -> Result<Secret, ExecError> {
     for var in ["GH_TOKEN", "GITHUB_TOKEN"] {
-        if let Ok(t) = std::env::var(var) {
-            if !t.is_empty() {
-                return Ok(Secret::new(t));
-            }
+        if let Ok(t) = std::env::var(var)
+            && !t.is_empty()
+        {
+            return Ok(Secret::new(t));
         }
     }
     let mut args = vec!["auth", "token"];
     if let Some(a) = account {
         args.extend(["-u", a]);
     }
-    run("gh", &args, None).map(Secret::new).map_err(|e| match e {
-        // Never echo gh's output: it is about a credential.
-        ExecError::Failed { cmd, .. } => ExecError::Failed {
-            cmd,
-            stderr: format!("no token for gh account {}", account.unwrap_or("(active)")),
-        },
-        other => other,
-    })
+    run("gh", &args, None)
+        .map(Secret::new)
+        .map_err(|e| match e {
+            // Never echo gh's output: it is about a credential.
+            ExecError::Failed { cmd, .. } => ExecError::Failed {
+                cmd,
+                stderr: format!("no token for gh account {}", account.unwrap_or("(active)")),
+            },
+            other => other,
+        })
 }

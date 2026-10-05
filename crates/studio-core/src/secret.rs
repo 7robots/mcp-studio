@@ -21,7 +21,9 @@ pub enum SecretRef {
 pub enum SecretError {
     #[error("not a secret reference (want op://… or env:NAME): {0}")]
     BadRef(String),
-    #[error("1Password is locked or timed out (`op` said: authorization timeout); unlock the app and retry")]
+    #[error(
+        "1Password is locked or timed out (`op` said: authorization timeout); unlock the app and retry"
+    )]
     Locked,
     #[error("`op` is not installed or not on PATH")]
     NoOp,
@@ -134,7 +136,10 @@ mod tests {
             SecretRef::parse("op://V/item/field").unwrap(),
             SecretRef::OnePassword("op://V/item/field".into())
         );
-        assert_eq!(SecretRef::parse("env:TOKEN").unwrap(), SecretRef::Env("TOKEN".into()));
+        assert_eq!(
+            SecretRef::parse("env:TOKEN").unwrap(),
+            SecretRef::Env("TOKEN".into())
+        );
         assert!(SecretRef::parse("plaintext-token").is_err());
         assert!(SecretRef::parse("env:").is_err());
         assert!(SecretRef::parse("op://").is_err());
