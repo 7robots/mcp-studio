@@ -1,0 +1,61 @@
+# Example MCP Studio instance for a fictional organization, "acme".
+# Copy this directory, change every value, and point Studio at it with
+# --instance, $MCP_STUDIO_INSTANCE, or default_instance in
+# ~/.config/mcp-studio/config.toml.
+
+[instance]
+name = "acme"                                  # slug: used for cache paths and Keychain accounts
+display_name = "Acme MCP fleet"
+
+# The identity provider the fleet's servers trust. Read-only probes check
+# that every server's scopes and redirect URI are configured here.
+[identity.okta]
+domain = "https://acme.okta.example"
+authorization_server = "default"
+audience = "https://mcp.acme.example"
+interactive_client_id = "0oaEXAMPLEINTERACTIVE"
+m2m_client_id = "0oaEXAMPLEM2M"
+m2m_client_secret = "op://Acme/mcp-gateway/GATEWAY_M2M_CLIENT_SECRET"
+policy_rules = ["0prEXAMPLERULE1", "0prEXAMPLERULE2"]
+admin_api = { tool = "okta-api", org = "acme" }
+
+# Read-only Workers, Builds and custom-domain probes.
+[cloudflare]
+account_id = "resolve"
+api_token = "op://Acme/mcp-studio/CLOUDFLARE_API_TOKEN"
+workers_subdomain = "acme"
+
+[github]
+account = "acme-bot"
+orgs = ["acme"]
+
+[[gateway]]
+id = "main"
+url = "https://gateway.mcp.acme.example"
+repo = "acme/mcp-gateway-worker"
+d1_database = "mcp-gateway"
+fixture_url = "https://fixture.mcp.acme.example"
+server_url_hint = "https://name.mcp.acme.example/mcp"
+
+[pattern]
+pack = "cf-workers-ts"
+source = "../../patterns/cf-workers-ts"         # relative to this directory
+values = "pattern-values.toml"
+conformance_dir = "conformance"
+domain_suffix = ".mcp.acme.example"
+
+[fleet]
+repos_dir = "../repos"
+discover = { github_topic = "mcp-server", require_file = "conformance.json" }
+include = ["acme/weather-mcp-worker"]
+
+[[fleet.server]]
+repo = "acme/weather-mcp-worker"
+gateway_id = "weather"
+
+[[marketplace]]
+id = "acme"
+repo = "acme/acme-plugin-marketplace"
+owner_name = "Acme"
+targets = ["claude", "codex"]
+publish = "auto"

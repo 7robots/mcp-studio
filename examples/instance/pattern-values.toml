@@ -1,0 +1,10 @@
+# Values substituted into the pattern template as {{name}}.
+okta_domain = "https://acme.okta.example"
+okta_issuer = "https://acme.okta.example/oauth2/default"
+okta_client_id = "0oaEXAMPLEINTERACTIVE"
+okta_audience = "https://mcp.acme.example"
+domain_suffix = "mcp.acme.example"
+gateway_host = "gateway.mcp.acme.example"
+github_org = "acme"
+op_vault = "Acme"
+test_email = "someone@acme.example"
