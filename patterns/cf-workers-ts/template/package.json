@@ -1,0 +1,34 @@
+{
+  "name": "replace-with-your-server-name",
+  "version": "0.1.0",
+  "private": true,
+  "description": "REPLACE-WITH-DESCRIPTION",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:workerd": "vitest run --project workerd",
+    "ci": "npm run typecheck && npm run test",
+    "check:placeholders": "bash scripts/check-placeholders.sh"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "1.2.1",
+    "@modelcontextprotocol/server": "2.3.1",
+    "hono": "4.13.13",
+    "zod": "^4.6.5",
+    "jose": "^6.2.12"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.22.0",
+    "@cloudflare/workers-types": "^5.20261005.1",
+    "@types/node": "^22.20.5",
+    "typescript": "^7.0.2",
+    "vitest": "4.1.11",
+    "wrangler": "^4.147.0"
+  },
+  "overrides": {
+    "miniflare": "5.20261001.0-alpha"
+  }
+}

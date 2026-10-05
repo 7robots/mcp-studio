@@ -1,0 +1,110 @@
+# Fill in every REPLACE value, then push — Workers Builds deploys on push to main.
+#
+# This is a real wrangler.toml, not a .example, because
+# @cloudflare/vitest-pool-workers READS IT to build the workerd test environment:
+# bindings, vars and compatibility flags all come from here, so the route tests in
+# test/flow.workerd.test.ts exercise the same configuration you deploy. Deploying
+# with the placeholders still fails fast — the KV and D1 ids are not real.
+
+name = "replace-with-your-server-name"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+# `global_fetch_strictly_public` is REQUIRED, not optional. The OAuth library
+# gates CIMD advertisement on it: without the flag it reports
+# `client_id_metadata_document_supported: false` and every client silently falls
+# back to deprecated DCR. It also routes same-zone subrequests out to the public
+# internet rather than looping back internally, which is what you want for
+# fetching a client metadata document or a JWKS.
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+
+# THE HOST HERE MUST MATCH `PUBLIC_MCP_URL` BELOW. That var is the RFC 8707
+# resource identifier and the base of the RFC 9728 metadata URL, and OAuthProvider
+# validates a client's `resource` parameter against it — so if PUBLIC_MCP_URL names
+# a custom domain and no route is attached, discovery resolves to a host this
+# Worker does not serve and every client fails at the first step.
+#
+# Pick ONE and make them agree:
+#   (a) custom domain — uncomment `routes` with the same host as PUBLIC_MCP_URL.
+#       Cloudflare auto-creates the DNS record and cert on deploy.
+#   (b) workers.dev only — leave `routes` commented and set PUBLIC_MCP_URL to
+#       https://<worker-name>.<account-subdomain>.workers.dev/mcp
+# routes = [{ pattern = "replace.example.com", custom_domain = true }]
+#
+# wrangler >= 4.116 DISABLES the workers.dev subdomain as soon as `routes` are
+# present. Set this explicitly to keep the workers.dev URL alive — connectors
+# and Okta redirect URIs are usually registered against it.
+# workers_dev = true
+
+# D1 database, bound directly (no REST tokens). The template's `list_examples`
+# tool and src/data.ts use it. Remove this block — along with src/data.ts, the
+# tool, and `DB` in worker-configuration.d.ts — if your server uses a different
+# data layer. Create the database via the Cloudflare MCP server
+# (POST /accounts/{id}/d1/database) and put its returned uuid here.
+[[d1_databases]]
+binding = "DB"
+database_name = "REPLACE-WITH-D1-DATABASE-NAME"
+database_id = "REPLACE-WITH-D1-UUID"
+
+# OAuth provider state: client registrations, auth codes, access/refresh tokens, m2m introspection cache.
+# Create the KV namespace via the Cloudflare MCP server (POST /accounts/{id}/storage/kv/namespaces).
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "REPLACE-WITH-KV-NAMESPACE-ID"
+
+# No Durable Object. The 2026-07-28 MCP protocol is stateless — there are no
+# sessions to hold, so the MCP layer needs no DO binding and no [[migrations]]
+# block. (Migrating an existing sessionful Worker off its McpAgent DO? Keep the
+# old migration tags and append a new one with `deleted_classes = ["OldClass"]`
+# — see references/agent_guide.md § Migrating an existing sessionful worker.)
+
+# Non-secret config. Secrets (OKTA_CLIENT_SECRET, COOKIE_ENCRYPTION_KEY) are
+# set via the Cloudflare MCP server (PUT /workers/scripts/{name}/secrets).
+[vars]
+OKTA_CLIENT_ID = "REPLACE-WITH-OKTA-CLIENT-ID"
+OKTA_DOMAIN = "https://replace-with-tenant.okta.com"
+OKTA_ISSUER = "https://replace-with-tenant.okta.com/oauth2/default"
+OKTA_SCOPES = "openid profile email offline_access"
+# Per-server scopes, not one coarse fleet-wide scope. Enterprise policy
+# granularity is capped by scope granularity, and with a SHARED authorization
+# server the `aud` is identical everywhere — so scopes are the ONLY thing
+# separating one server from another. Space-separated; any one of them admits
+# the caller, and per-tool enforcement happens in src/scopes.ts.
+OKTA_M2M_SCOPE = "REPLACE:read REPLACE:write"
+
+# OPTIONAL — only if this server sits behind mcp-gateway. Uncomment these three
+# together with the src/actor.ts wiring in src/index.ts (see that file's header).
+# The gateway signs a 60-second EdDSA statement of who it is calling for; this
+# server verifies it against the gateway's JWKS and reports the subject as
+# extra.on_behalf_of, never replacing the token's own subject.
+#
+# "false" means a valid assertion is used when present and its absence is not an
+# error. "true" refuses every direct M2M caller with 403 — a deliberate cutover,
+# not a default. Note that with "false" a JWKS fetch failure degrades SILENTLY,
+# so verify the fetch works before relying on the enrichment.
+# REQUIRE_GATEWAY_ACTOR = "false"
+# GATEWAY_ISSUER = "https://{{gateway_host}}"
+# GATEWAY_JWKS_URL = "https://{{gateway_host}}/.well-known/jwks.json"
+PUBLIC_MCP_URL = "https://replace.{{domain_suffix}}/mcp"
+# M2M introspection cache TTL in seconds. The code default (when this var is
+# unset) is 300; the template ships 3600 to favor fewer KV writes on the free
+# tier (1,000/day account-wide), traded against revocation lag. Per-token
+# validity is still capped at the token's own `exp`. Set "0" to disable caching.
+
+# OPTIONAL — Enterprise-Managed Authorization (ID-JAG), the MCP extension
+# `io.modelcontextprotocol/enterprise-managed-authorization`. Space-separated
+# `issuer=jwksUri` pairs naming the IdPs whose ID-JAG assertions this server will
+# accept.
+#
+# OPERATOR CONFIG ONLY — never read this from KV, D1, or anything a request can
+# influence. The jwksUri is FETCHED OUTBOUND, which makes it an SSRF primitive.
+# src/ema.ts additionally requires each jwksUri's origin to equal its issuer's,
+# and refuses the whole list rather than a subset if any pair fails to parse.
+# Unset (the default) leaves the ID-JAG grant disabled.
+# EMA_TRUSTED_ISSUERS = "https://replace-with-tenant.okta.com/oauth2/default=https://replace-with-tenant.okta.com/oauth2/default/v1/keys"
+
+# OPTIONAL — pin the audience M2M access tokens must carry. Leave unset while the
+# fleet shares one Okta authorization server, because Okta sets `aud` per
+# authorization server, so every server on that AS sees the same value and
+# audience pinning cannot separate them. Set it once each server has its own
+# custom authorization server.
+# OKTA_M2M_AUDIENCE = "https://replace.{{domain_suffix}}/mcp"

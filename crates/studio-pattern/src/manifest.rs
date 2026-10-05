@@ -118,6 +118,11 @@ pub struct WranglerRules {
     pub required_kv_bindings: Vec<String>,
     /// The var holding the public MCP URL; its host must equal a route host.
     pub public_url_var: Option<String>,
+    /// No live Durable Object binding or un-deleted migrated class.
+    #[serde(default)]
+    pub forbid_durable_objects: bool,
+    /// The var listing the server's scopes (`<slug>:<action>`, one slug).
+    pub scope_var: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
@@ -134,6 +139,11 @@ pub struct Placeholders {
     /// Regexes that must not match anywhere in a scaffolded repo.
     #[serde(default)]
     pub patterns: Vec<String>,
+    /// File extensions scanned (without the dot). Empty: every text file.
+    #[serde(default)]
+    pub extensions: Vec<String>,
+    /// Regex over repo-relative paths (`/`-separated) that are not scanned.
+    pub exclude: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -187,9 +197,18 @@ mod tests {
 
     #[test]
     fn versions_order_by_date_then_serial() {
-        assert_eq!(compare_versions("2026-08-24.1", "2026-10-05.1"), Ordering::Less);
-        assert_eq!(compare_versions("2026-10-05.2", "2026-10-05.10"), Ordering::Less);
-        assert_eq!(compare_versions("2026-10-05.1", "2026-10-05.1"), Ordering::Equal);
+        assert_eq!(
+            compare_versions("2026-08-24.1", "2026-10-05.1"),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_versions("2026-10-05.2", "2026-10-05.10"),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_versions("2026-10-05.1", "2026-10-05.1"),
+            Ordering::Equal
+        );
     }
 
     #[test]

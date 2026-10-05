@@ -1,0 +1,148 @@
+# cf-workers-ts: a TypeScript MCP server on Cloudflare Workers.
+#
+# Stateless MCP (spec 2026-07-28) on @modelcontextprotocol/server v2, Okta
+# upstream OAuth with a mandatory consent gate, locally verified M2M bearer
+# JWTs, per-server scopes, CIMD and Enterprise-Managed Authorization.
+#
+# This file is the single source of the pattern's version, its exact pins, the
+# security files under conformance and the static rules a conforming repo must
+# follow. `mcp-studio pattern lint` and the fleet probes read it; nothing about
+# the pattern is hardcoded in Rust. Bump `version` when a security-file change
+# is ported fleet-wide (see CHANGELOG.md), then `mcp-studio pattern bless`.
+
+[pack]
+name = "cf-workers-ts"
+version = "2026-10-05.1"
+description = "TypeScript MCP server on Cloudflare Workers: stateless MCP 2026-07-28, Okta OAuth + consent gate, local M2M JWT verification"
+template = "template"
+skill = "skill"
+
+# Exact `dependencies` versions: security-load-bearing.
+[pins]
+"@cloudflare/workers-oauth-provider" = "1.2.1"
+"@modelcontextprotocol/server" = "2.3.1"
+"hono" = "4.13.13"
+
+# Exact `devDependencies` versions.
+[dev_pins]
+"@cloudflare/vitest-pool-workers" = "0.22.0"
+"vitest" = "4.1.11"
+
+# Exact `overrides` values. The pool pins a miniflare with high-severity
+# undici and sharp advisories; drop this once a pool release moves past them.
+[overrides]
+"miniflare" = "5.20261001.0-alpha"
+
+# Major-version floors for the ranged dependencies.
+[majors]
+"zod" = 4
+"jose" = 6
+"@cloudflare/workers-types" = 5
+"@types/node" = 22
+"typescript" = 7
+"wrangler" = 4
+
+[forbidden]
+# v2 of the server SDK replaces both; Ajv needs eval, which Workers forbid.
+dependencies = ["@modelcontextprotocol/sdk", "agents", "ajv"]
+# A hit in src/*.ts means the server predates the stateless spec.
+legacy_markers = ["McpAgent", "agents/mcp"]
+
+# The security seam. Business logic (mcp.ts, data files) is deliberately out:
+# it is SUPPOSED to differ. index.ts is in, because wiring lives there and an
+# unwired control is the failure mode this exists to catch. The behavioral
+# matrix spec is one file, identical fleet-wide; its per-repo variation lives in
+# test/matrix.params.ts, which is deliberately NOT tracked.
+[security]
+conformance_file = "conformance.json"
+files = [
+  "src/actor.ts",
+  "src/auth.ts",
+  "src/consent.ts",
+  "src/ema.ts",
+  "src/index.ts",
+  "src/jwt.ts",
+  "src/m2m.ts",
+  "src/oauth-state.ts",
+  "src/resource.ts",
+  "src/scopes.ts",
+  "test/matrix.workerd.test.ts",
+]
+
+[required]
+files = [
+  "conformance.json",
+  "scripts/check-conformance.mjs",
+  "package.json",
+  "package-lock.json",
+  "wrangler.toml",
+  "worker-configuration.d.ts",
+  "tsconfig.json",
+  "tsconfig.test.json",
+  "vitest.config.ts",
+  "src/mcp.ts",
+  "src/skill.ts",
+  "test/matrix.params.ts",
+]
+
+# package.json scripts that must exist, and the prefix each must start with.
+# The conformance gate runs first so an un-blessed security edit fails the
+# build before anything else does.
+[required.scripts]
+ci = "npm run conformance"
+conformance = "node scripts/check-conformance.mjs"
+
+[wrangler]
+main = "src/index.ts"
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+min_compatibility_date = "2026-05-01"
+required_vars = [
+  "OKTA_CLIENT_ID",
+  "OKTA_DOMAIN",
+  "OKTA_ISSUER",
+  "OKTA_SCOPES",
+  "OKTA_M2M_SCOPE",
+  "PUBLIC_MCP_URL",
+]
+required_kv_bindings = ["OAUTH_KV"]
+public_url_var = "PUBLIC_MCP_URL"
+# The MCP layer is stateless: no live Durable Object. Retired classes kept in
+# `[[migrations]]` history (`deleted_classes`) are fine and required.
+forbid_durable_objects = true
+# Each OKTA_M2M_SCOPE entry is `<slug>:<action>`, all on one slug.
+scope_var = "OKTA_M2M_SCOPE"
+
+[lockfile]
+# Workers Builds' `npm ci` (Linux x64, npm 10.9.2) refuses a lockfile that
+# lacks any @img/sharp-* platform entry or its version. 26 sharp platform
+# packages plus @img/colour.
+required_prefix_counts = { "@img/" = 27 }
+
+# From template/scripts/check-placeholders.sh: a match anywhere outside the
+# excluded paths means a template placeholder survived into a generated repo.
+[placeholders]
+patterns = [
+  'REPLACE-WITH-',
+  'replace-with-',
+  'REPLACE:',
+  'REPLACE_',
+  'replace\.mcp\.',
+  '\bREPLACE\b',
+]
+extensions = ["ts", "toml", "json", "md"]
+exclude = '^(README\.md|scripts/check-placeholders\.sh|docs/|node_modules/)'
+
+# Template variables, substituted as {{name}} in template/ and skill/. Every
+# one must be supplied by the instance's pattern-values.toml. A literal `{{` is
+# written {{"{{"}}.
+[variables]
+okta_domain = "Okta org URL, https://<org>.okta.com (never the -admin console host)"
+okta_issuer = "Issuer of the authorization server the fleet's tokens come from"
+okta_client_id = "Client id of the shared interactive Okta app every server's /callback is registered on"
+okta_audience = "The `aud` every M2M token from the shared authorization server carries"
+domain_suffix = "Hostname suffix of every server's custom domain, without a leading dot (servers are <name>.<domain_suffix>)"
+gateway_host = "Hostname of the mcp-gateway that fronts the fleet (its JWKS is https://<gateway_host>/.well-known/jwks.json)"
+github_org = "GitHub organization the fleet's repos live in"
+op_vault = "1Password vault holding the fleet's secrets"
+test_email = "An Okta login email used as a realistic subject in test fixtures"
+operator_name = "First name of the person who operates the fleet, used in examples"

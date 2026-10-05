@@ -1,0 +1,22 @@
+{
+  // Typechecking for the test suite, separate from tsconfig.json.
+  //
+  // WHY SEPARATE. test/oauth-state.test.ts reads src/auth.ts off disk to assert
+  // an ordering that has no other observable signature, so the tests need
+  // @types/node. Adding "node" to the main project's `types` would let src/
+  // import `node:*`, call `require`, and reference `__dirname` and still compile
+  // clean. (It would NOT newly admit `process`, `Buffer` or `setImmediate` —
+  // @cloudflare/workers-types declares those itself and `nodejs_compat` is set,
+  // so those are correct here, not drift.) Two projects keeps both honest.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [
+      "node",
+      "@cloudflare/workers-types",
+      // Declares the `cloudflare:test` module (SELF, env) that
+      // test/flow.workerd.test.ts imports.
+      "@cloudflare/vitest-pool-workers/types"
+    ]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts", "worker-configuration.d.ts"]
+}

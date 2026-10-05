@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    // @cloudflare/vitest-pool-workers/types is what declares the
+    // `cloudflare:test` module (SELF, env) that test/*.workerd.test.ts imports.
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers/types"],
+    "strict": true,
+    "noImplicitAny": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "noEmit": true
+  },
+  // src only. The test suite is typechecked by tsconfig.test.json, which is a
+  // SEPARATE project on purpose: test/oauth-state.test.ts reads files from disk
+  // and needs @types/node, and pulling that in here would let src/ import
+  // `node:*`, call `require`, or reference `__dirname` and still compile.
+  "include": ["src/**/*.ts", "worker-configuration.d.ts"]
+}
