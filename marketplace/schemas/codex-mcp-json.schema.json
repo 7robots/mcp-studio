@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:mcp-studio:schema:codex-mcp-json",
+  "title": "servers/<slug>/.codex-plugin/mcp.json — Codex-only MCP config",
+  "description": "Present ONLY for credentialed (bearer/api_key) entries. The shared .mcp.json carries the credential under Claude's `headers` key, which Codex ignores — Codex reads `http_headers`. Note this file has no `type` field, unlike the shared one.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mcpServers"],
+  "properties": {
+    "mcpServers": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url", "http_headers"],
+        "properties": {
+          "url": { "type": "string", "pattern": "^https://[^\\s]+$" },
+          "http_headers": { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

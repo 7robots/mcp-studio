@@ -1,0 +1,15 @@
+{
+  "name": "acme-plugin-marketplace",
+  "interface": {
+    "displayName": "Acme Team"
+  },
+  "plugins": [
+    {
+      "name": "acme-search",
+      "source": "./servers/acme-search",
+      "policy": {
+        "installation": "AVAILABLE"
+      }
+    }
+  ]
+}

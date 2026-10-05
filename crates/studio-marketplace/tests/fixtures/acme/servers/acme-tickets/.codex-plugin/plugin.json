@@ -1,0 +1,12 @@
+{
+  "name": "acme-tickets",
+  "version": "1.2.0",
+  "description": "File and track Acme support tickets.",
+  "author": {
+    "name": "Acme Team"
+  },
+  "mcpServers": "./.codex-plugin/mcp.json",
+  "interface": {
+    "displayName": "Acme Tickets"
+  }
+}

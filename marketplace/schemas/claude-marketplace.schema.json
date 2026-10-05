@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:mcp-studio:schema:claude-marketplace",
+  "title": ".claude-plugin/marketplace.json — Claude Code catalog",
+  "description": "Claude Code's loader REJECTS a plugin entry carrying an unrecognized top-level key. This schema is strict on purpose: additionalProperties=false on an entry is what catches the endpoint `url` being copied onto a catalog entry, which broke installs once. `url` is reserved for source objects of type \"url\" and is never a plugin-entry field. Spec: https://code.claude.com/docs/en/plugin-marketplaces",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "owner", "plugins"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$" },
+    "owner": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "email": { "type": "string" },
+        "url": { "type": "string" }
+      }
+    },
+    "metadata": { "type": "object" },
+    "plugins": { "type": "array", "items": { "$ref": "#/definitions/entry" } }
+  },
+  "definitions": {
+    "source": {
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Co-located relative path; must start with './' and must not traverse upward.",
+          "pattern": "^\\./(?!.*\\.\\.)[^\\s]*$"
+        },
+        {
+          "type": "object",
+          "required": ["source"],
+          "properties": {
+            "source": { "enum": ["git", "git-subdir", "github", "url", "local", "npm"] }
+          }
+        }
+      ]
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "source", "description", "version"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$", "maxLength": 64 },
+        "source": { "$ref": "#/definitions/source" },
+        "description": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "version": { "type": "string", "minLength": 1 },
+        "category": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "strict": { "type": "boolean" },
+        "relevance": { "type": "string" },
+        "author": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "minLength": 1 } } },
+        "homepage": { "type": "string", "pattern": "^https://[^\\s]+$" },
+        "repository": { "type": "string" },
+        "license": { "type": "string" },
+        "keywords": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "acme-search",
+  "version": "0.1.0",
+  "description": "Search Acme's product documentation.",
+  "author": {
+    "name": "Acme Team"
+  },
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Acme Search"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "acme-plugin-marketplace",
+  "owner": { "name": "Acme Team" },
+  "plugins": [
+    {
+      "name": "acme-search",
+      "source": "./servers/acme-search",
+      "description": "Search Acme's product documentation.",
+      "version": "0.1.0",
+      "url": "https://acme.example.com/mcp"
+    }
+  ]
+}

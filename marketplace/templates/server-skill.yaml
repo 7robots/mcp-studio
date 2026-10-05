@@ -1,0 +1,10 @@
+# A skill-only entry: a plugin that ships skills/commands, with no MCP endpoint.
+# `kind: skill` is what makes `url` optional.
+name: Acme Marketplace Tools
+slug: acme-marketplace-tools
+kind: skill
+description: Skills for running the Acme team plugin marketplace.
+tags: [marketplace, admin]
+homepage: https://acme.example.com/marketplace-tools
+version: 1.0.0
+owner: someone@acme.example

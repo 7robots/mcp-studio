@@ -1,0 +1,14 @@
+{
+  "name": "acme-search",
+  "description": "Search Acme's product documentation.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Acme Team"
+  },
+  "keywords": [
+    "mcp",
+    "search",
+    "docs"
+  ],
+  "homepage": "https://acme.example.com"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "acme-weather",
+  "description": "Forecasts for Acme sites.",
+  "version": "2.0.0",
+  "author": {
+    "name": "Acme Team"
+  },
+  "keywords": [
+    "mcp"
+  ],
+  "repository": "https://code.acme.example/weather",
+  "license": "MIT"
+}

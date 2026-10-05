@@ -1,0 +1,12 @@
+# Source of truth for this entry. Edit here, then regenerate with mcp-studio marketplace.
+name: Acme Search
+description: Search Acme's product documentation.
+url: https://acme.example.com/mcp
+transport: http
+auth:
+  type: none
+tags: [search, docs]
+category: Developer Tools
+homepage: https://acme.example.com
+version: 0.1.0
+owner: someone@acme.example

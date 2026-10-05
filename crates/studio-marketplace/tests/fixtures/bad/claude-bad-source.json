@@ -1,0 +1,7 @@
+{
+  "name": "acme-plugin-marketplace",
+  "owner": { "name": "Acme Team" },
+  "plugins": [
+    { "name": "acme-search", "source": "../outside/acme", "description": "Escapes the repo root.", "version": "0.1.0" }
+  ]
+}

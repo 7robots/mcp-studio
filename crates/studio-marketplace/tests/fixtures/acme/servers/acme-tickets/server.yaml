@@ -1,0 +1,11 @@
+# Source of truth for this entry. Edit here, then regenerate with mcp-studio marketplace.
+name: Acme Tickets
+slug: acme-tickets
+description: File and track Acme support tickets.
+url: https://tickets.mcp.acme.example/mcp
+transport: http
+auth:
+  type: bearer
+tags:
+- support
+version: 1.2.0

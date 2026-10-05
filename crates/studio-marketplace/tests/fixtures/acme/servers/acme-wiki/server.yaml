@@ -1,0 +1,10 @@
+# Source of truth for this entry. Edit here, then regenerate with mcp-studio marketplace.
+name: Acme Wiki
+slug: acme-wiki
+description: Read and search the Acme wiki — every space, page, and attachment the
+  signed-in user can see, with the wiki's own permissions applied.
+url: https://wiki.mcp.acme.example/mcp
+transport: http
+auth:
+  type: oauth
+version: 0.3.1

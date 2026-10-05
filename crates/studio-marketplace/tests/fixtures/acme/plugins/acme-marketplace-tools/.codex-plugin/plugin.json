@@ -1,0 +1,12 @@
+{
+  "name": "acme-marketplace-tools",
+  "version": "1.0.0",
+  "description": "Skills for running the Acme team plugin marketplace.",
+  "author": {
+    "name": "Acme Team"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Acme Marketplace Tools"
+  }
+}

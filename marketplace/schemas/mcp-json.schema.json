@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:mcp-studio:schema:mcp-json",
+  "title": "servers/<slug>/.mcp.json — shared MCP config",
+  "description": "Read by BOTH Claude and Codex for remote streamable-HTTP servers (verified against a live Codex install 2026-07-02: Codex tolerates the `type` field). Only present for kind: mcp-server.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mcpServers"
+  ],
+  "properties": {
+    "mcpServers": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "url"
+        ],
+        "properties": {
+          "type": {
+            "enum": [
+              "http",
+              "sse"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "pattern": "^https://[^\\s]+$"
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

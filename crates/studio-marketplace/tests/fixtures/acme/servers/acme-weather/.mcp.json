@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "acme-weather": {
+      "type": "sse",
+      "url": "https://weather.mcp.acme.example/sse",
+      "headers": {
+        "X-API-Key": "<YOUR_API_KEY>"
+      }
+    }
+  }
+}

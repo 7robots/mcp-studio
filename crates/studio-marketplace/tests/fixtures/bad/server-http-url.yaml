@@ -1,0 +1,3 @@
+name: Acme Search
+description: Endpoint must be https.
+url: http://acme.example.com/mcp

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "acme-search": {
+      "url": "https://acme.example.com/mcp",
+      "http_headers": {
+        "Authorization": "Bearer <YOUR_API_KEY>"
+      }
+    }
+  }
+}

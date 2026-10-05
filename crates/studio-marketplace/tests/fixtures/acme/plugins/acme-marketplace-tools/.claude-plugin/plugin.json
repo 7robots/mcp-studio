@@ -1,0 +1,13 @@
+{
+  "name": "acme-marketplace-tools",
+  "description": "Skills for running the Acme team plugin marketplace.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Acme Team"
+  },
+  "keywords": [
+    "marketplace",
+    "admin"
+  ],
+  "homepage": "https://acme.example.com/marketplace-tools"
+}

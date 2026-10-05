@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "acme-wiki": {
+      "type": "http",
+      "url": "https://wiki.mcp.acme.example/mcp"
+    }
+  }
+}

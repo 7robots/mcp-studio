@@ -1,0 +1,12 @@
+{
+  "name": "acme-weather",
+  "version": "2.0.0",
+  "description": "Forecasts for Acme sites.",
+  "author": {
+    "name": "Acme Team"
+  },
+  "mcpServers": "./.codex-plugin/mcp.json",
+  "interface": {
+    "displayName": "Acme Weather"
+  }
+}

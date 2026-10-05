@@ -1,0 +1,46 @@
+{
+  "name": "acme-plugin-marketplace",
+  "interface": {
+    "displayName": "Acme Team"
+  },
+  "plugins": [
+    {
+      "name": "acme-marketplace-tools",
+      "source": "./plugins/acme-marketplace-tools",
+      "policy": {
+        "installation": "AVAILABLE"
+      }
+    },
+    {
+      "name": "acme-search",
+      "source": "./servers/acme-search",
+      "policy": {
+        "installation": "AVAILABLE"
+      }
+    },
+    {
+      "name": "acme-tickets",
+      "source": "./servers/acme-tickets",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "acme-weather",
+      "source": "./servers/acme-weather",
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "acme-wiki",
+      "source": "./servers/acme-wiki",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_FIRST_USE"
+      }
+    }
+  ]
+}

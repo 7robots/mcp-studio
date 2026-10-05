@@ -1,0 +1,204 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:mcp-studio:schema:server",
+  "title": "server.yaml — one marketplace entry",
+  "description": "Source of truth for a single entry in a plugin marketplace. Everything else in servers/<slug>/ is derived from this file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "description"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "Human-readable display name."
+    },
+    "slug": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+      "description": "Stable id. Defaults to the directory name / slugified name. Must not be a reserved name."
+    },
+    "kind": {
+      "enum": [
+        "mcp-server",
+        "skill"
+      ],
+      "default": "mcp-server",
+      "description": "mcp-server: a remote MCP endpoint (requires url). skill: a plugin shipping skills/commands only, no endpoint."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "url": {
+      "type": "string",
+      "maxLength": 2048,
+      "pattern": "^https://[^\\s]+$",
+      "description": "The MCP endpoint. Required when kind is mcp-server. NEVER copied onto a catalog plugin entry."
+    },
+    "transport": {
+      "enum": [
+        "http",
+        "sse"
+      ],
+      "default": "http"
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "none",
+            "bearer",
+            "api_key",
+            "oauth"
+          ],
+          "default": "none"
+        },
+        "header_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+        "maxLength": 40
+      }
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Display grouping, threaded onto the catalog entry's `category` field."
+    },
+    "homepage": {
+      "type": "string",
+      "maxLength": 2048,
+      "pattern": "^https://[^\\s]+$"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "owner": {
+      "type": "string",
+      "maxLength": 320,
+      "description": "Email of whoever added the entry. Advisory attribution; never copied into generated catalogs."
+    },
+    "deprecated": {
+      "type": "boolean"
+    },
+    "deprecated_reason": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "claude": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Claude-only overrides, threaded onto the Claude catalog entry (and repository/license onto the plugin manifest).",
+      "properties": {
+        "strict": {
+          "type": "boolean"
+        },
+        "license": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "repository": {
+          "type": "string",
+          "maxLength": 2048,
+          "pattern": "^https://[^\\s]+$"
+        }
+      }
+    },
+    "codex": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Codex-only overrides for the Codex catalog entry's policy.",
+      "properties": {
+        "installation": {
+          "enum": [
+            "AVAILABLE",
+            "INSTALLED_BY_DEFAULT",
+            "NOT_AVAILABLE"
+          ],
+          "default": "AVAILABLE"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "description": "An mcp-server entry must carry an endpoint URL.",
+      "if": {
+        "anyOf": [
+          {
+            "properties": {
+              "kind": {
+                "const": "mcp-server"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          {
+            "not": {
+              "required": [
+                "kind"
+              ]
+            }
+          }
+        ]
+      },
+      "then": {
+        "required": [
+          "url"
+        ]
+      }
+    },
+    {
+      "description": "api_key auth needs the header name to send the credential in.",
+      "if": {
+        "properties": {
+          "auth": {
+            "properties": {
+              "type": {
+                "const": "api_key"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "required": [
+          "auth"
+        ]
+      },
+      "then": {
+        "properties": {
+          "auth": {
+            "required": [
+              "header_name"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

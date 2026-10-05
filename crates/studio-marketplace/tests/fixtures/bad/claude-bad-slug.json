@@ -1,0 +1,7 @@
+{
+  "name": "acme-plugin-marketplace",
+  "owner": { "name": "Acme Team" },
+  "plugins": [
+    { "name": "Acme_Search", "source": "./servers/acme-search", "description": "Uppercase + underscore is not a valid slug.", "version": "0.1.0" }
+  ]
+}

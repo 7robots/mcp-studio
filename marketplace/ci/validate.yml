@@ -1,0 +1,92 @@
+# Marketplace data-repo validation gate.
+#
+# Seeded into a marketplace repo at .github/workflows/validate.yml, alongside
+# the schemas it references in schema/.
+#
+# Deliberately requires NO repository secrets and NO PAT: it validates this
+# repo's own files against the schemas committed beside them. Nothing is
+# installed from a private repo, so any team can run this without coordinating
+# with anyone.
+#
+# What it catches: malformed catalogs, invalid slugs, a `..` in a source path,
+# a missing endpoint URL — and above all a stray top-level `url` on a plugin
+# entry, which Claude Code's loader rejects at install time in someone else's
+# terminal rather than here.
+name: validate-marketplace
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Validate catalogs and every entry
+        run: |
+          set -uo pipefail
+          fail=0
+
+          # ajv exits non-zero both for invalid DATA and for an invalid SCHEMA.
+          # Assert on the message so a broken schema can never read as a pass.
+          check() {
+            local schema=$1 data=$2 out
+            [ -f "$data" ] || return 0
+            case "$data" in
+              *.yaml|*.yml)
+                npx --yes js-yaml@4 "$data" > /tmp/d.json 2>/dev/null || {
+                  echo "FAIL  $data — not valid YAML"; fail=1; return; }
+                data=/tmp/d.json ;;
+            esac
+            out=$(npx --yes ajv-cli@5 validate --spec=draft7 -s "$schema" -d "$data" 2>&1 | grep -v '^npm')
+            if grep -q 'schema .* is invalid' <<<"$out"; then
+              echo "FAIL  $schema is itself invalid:"; sed 's/^/      /' <<<"$out"; fail=1
+            elif grep -q ' valid$' <<<"$out"; then
+              echo "ok    $2"
+            else
+              echo "FAIL  $2"; sed 's/^/      /' <<<"$out"; fail=1
+            fi
+          }
+
+          shopt -s nullglob
+
+          check schema/claude-marketplace.schema.json .claude-plugin/marketplace.json
+          check schema/codex-marketplace.schema.json  .agents/plugins/marketplace.json
+
+          # servers/  = entries providing an MCP server
+          # plugins/  = entries providing skills/commands only (no endpoint)
+          for d in servers/*/ plugins/*/; do
+            [ -d "$d" ] || continue
+            check schema/server.schema.json        "$d/server.yaml"
+            check schema/claude-plugin.schema.json "$d/.claude-plugin/plugin.json"
+            check schema/codex-plugin.schema.json  "$d/.codex-plugin/plugin.json"
+            check schema/mcp-json.schema.json      "$d/.mcp.json"
+            # Only credentialed (bearer/api_key) entries have this file.
+            check schema/codex-mcp-json.schema.json "$d/.codex-plugin/mcp.json"
+          done
+
+          # Every catalog entry must point at a directory that exists.
+          for cat in .claude-plugin/marketplace.json .agents/plugins/marketplace.json; do
+            [ -f "$cat" ] || continue
+            for src in $(node -e "
+              const c=require('./$cat');
+              (c.plugins||[]).forEach(p=>{ if(typeof p.source==='string') console.log(p.source) });
+            "); do
+              if [ ! -d "$src" ]; then
+                echo "FAIL  $cat references missing directory: $src"; fail=1
+              fi
+            done
+          done
+
+          echo
+          [ "$fail" -eq 0 ] && echo "marketplace valid" || echo "marketplace INVALID"
+          exit $fail

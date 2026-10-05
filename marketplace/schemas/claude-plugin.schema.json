@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:mcp-studio:schema:claude-plugin",
+  "title": "servers/<slug>/.claude-plugin/plugin.json",
+  "type": "object",
+  "required": [
+    "name",
+    "description",
+    "version",
+    "author"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+      "maxLength": 64
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "author": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "keywords": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "homepage": {
+      "type": "string",
+      "pattern": "^https://[^\\s]+$"
+    },
+    "skills": {
+      "type": "string",
+      "pattern": "^\\./(?!.*\\.\\.)[^\\s]*$",
+      "description": "Optional extra skills location; adds to the default skills/ scan."
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "description": "Claude Code itself requires only `name`; this schema additionally requires description/version/author as house style, because a marketplace catalog entry needs them and the two should agree. Skills are auto-discovered from skills/ at the plugin root — the `skills` key only ADDS extra locations to that scan (verified against code.claude.com/docs/en/plugins-reference, 2026-08-18)."
+}

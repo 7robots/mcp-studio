@@ -1,0 +1,10 @@
+# A skill-only entry: a plugin that ships skills/commands, with no MCP endpoint.
+name: Acme Marketplace Tools
+slug: acme-marketplace-tools
+kind: skill
+description: Skills for running the Acme team plugin marketplace.
+tags:
+- marketplace
+- admin
+homepage: https://acme.example.com/marketplace-tools
+version: 1.0.0
