@@ -134,7 +134,7 @@ While `captures_input()` is true (a form or modal is open) every key except
 `Ctrl-c` goes to the module, so typing `1` or `q` into a form works.
 
 Tab / Shift-Tab are free for modules (the Gateway module uses them for its
-Servers / Usage / Policy screens).
+Servers / Usage / Policy / Scopes / Connections screens).
 
 ### Overlays
 
@@ -180,12 +180,27 @@ generated footer and fall-through keys.
 - One `Pane` per `[[gateway]]` (`GatewayModule::new(sessions, opener)`), each
   with its own `Session`, slots, selection, overlay and sign-in; `p` opens a
   picker when there is more than one, and only the pane on screen loads or polls.
-- Screens: Servers (registry + detail), Usage (`usage_stats`), Policy
-  (`policy_events`); the latter two only for an admin sign-in and never
-  requested for a view-only one.
+- Screens: Servers (registry + detail, with the server's version and who
+  registered it when the gateway reports them), Usage (`usage_stats`), Policy
+  (`policy_events`), Scopes (`list_scope_owners`) and Connections
+  (`list_connections`, metadata only; `f` filters by kind); all but Servers
+  only for an admin sign-in and never requested for a view-only one. A screen
+  whose tool the gateway does not offer (an older gateway: `tools/list` is the
+  source of truth, recorded in `Identity::tools`) says "not supported by this
+  gateway" and is never requested. The header shows the gateway's build from
+  `health` when it reports one.
 - Admin actions on Servers: register `a`, refresh `x`/`X`, approve drift `A`,
-  status `s`, access `o`, classify `c`, timeout `t`, change URL `u` (typed id),
-  delete `D` (typed id).
+  status `s`, access `o`, classify `c`, timeout `t`, edit display name and
+  description `e` (`update_server` only), change URL `u` (typed id; through
+  `update_server` when offered, which probes first and changes nothing on
+  failure, else the unregister/register composite), delete `D` (typed id).
+  On Connections: revoke a user `R` (a form for the `sub`, then the sub typed
+  to confirm; the toast carries `revoke_user_access`'s counts).
+- `C` on Servers is the `call_tool` console, for any sign-in: pick an active
+  server, then a tool (those classified read; one more entry lists the rest),
+  then a form for the JSON arguments (validated as a JSON object). A tool not
+  classified read asks first, a destructive one by typing its name. The
+  result opens in a scrollable viewer (`j`/`k`, `Space`, `g`/`G`, `Esc`).
 - `L` signs in from inside the TUI: `Session::login` runs in a spawned task with
   the module's `Opener` (the system browser in production, an auto-consenting
   GET in the demo and tests); the authorization URL is shown while it waits and

@@ -29,6 +29,10 @@ struct Cli {
     /// answer /mcp with plain JSON instead of an event stream
     #[arg(long)]
     json: bool,
+    /// behave like an older gateway: no update_server, list_scope_owners or
+    /// list_connections, no server versions and no build in health
+    #[arg(long)]
+    legacy: bool,
 }
 
 #[tokio::main]
@@ -38,6 +42,7 @@ async fn main() -> anyhow::Result<()> {
         idp_grants_admin: !cli.reader,
         sse: !cli.json,
         state_path: cli.state,
+        legacy: cli.legacy,
         ..Options::default()
     };
     if cli.not_admin {

@@ -1,7 +1,8 @@
 //! Admin actions: each is one or a few admin tool calls, reported back as one
 //! line for a status bar (the TUI) and the raw result (the CLI's `--json`).
-//! The one change the gateway has no tool for — a new URL — is composed out
-//! of unregister and register, putting back what a registration does not carry.
+//! A new URL is `update_server` on a gateway that offers it; on an older one
+//! it is composed out of unregister and register, putting back what a
+//! registration does not carry.
 
 use serde_json::{Value, json};
 
@@ -30,6 +31,25 @@ pub enum Action {
     ChangeUrl {
         server: Box<Server>,
         url: String,
+    },
+    /// Display name and description, through `update_server` only; `None`
+    /// leaves a field as it is.
+    UpdateDetails {
+        server: String,
+        display_name: Option<String>,
+        description: Option<String>,
+    },
+    /// Any of the fields `update_server` takes, without a fallback (the CLI's
+    /// `update`).
+    Update {
+        server: String,
+        url: Option<String>,
+        display_name: Option<String>,
+        description: Option<String>,
+    },
+    /// Revokes everything the gateway holds for a user (`revoke_user_access`).
+    RevokeUser {
+        sub: String,
     },
     /// `None` refreshes every server.
     Refresh {
@@ -63,6 +83,10 @@ impl Action {
             Action::Register { url, .. } => format!("Registering {url}"),
             Action::Timeout { server, .. } => format!("Setting {server}'s timeout"),
             Action::ChangeUrl { server, .. } => format!("Moving {} to its new URL", server.id),
+            Action::UpdateDetails { server, .. } | Action::Update { server, .. } => {
+                format!("Updating {server}")
+            }
+            Action::RevokeUser { sub } => format!("Revoking {sub}'s access"),
             Action::Refresh { server: Some(s) } => format!("Refreshing {s}"),
             Action::Refresh { server: None } => "Refreshing every server".into(),
             Action::ApproveScopes { server } => format!("Approving {server}'s scopes"),
@@ -146,7 +170,57 @@ pub async fn run(session: &Session, action: Action) -> GatewayResult<Outcome> {
                 r,
             ))
         }
-        Action::ChangeUrl { server, url } => change_url(session, &server, &url).await,
+        Action::ChangeUrl { server, url } => {
+            if session.supports(UPDATE_SERVER).await? {
+                update(session, &server.id, Some(&url), None, None).await
+            } else {
+                change_url(session, &server, &url).await
+            }
+        }
+        Action::UpdateDetails {
+            server,
+            display_name,
+            description,
+        } => {
+            if !session.supports(UPDATE_SERVER).await? {
+                return Err(GatewayError::Unsupported(UPDATE_SERVER.into()));
+            }
+            update(
+                session,
+                &server,
+                None,
+                display_name.as_deref(),
+                description.as_deref(),
+            )
+            .await
+        }
+        Action::Update {
+            server,
+            url,
+            display_name,
+            description,
+        } => {
+            if !session.supports(UPDATE_SERVER).await? {
+                return Err(GatewayError::Unsupported(UPDATE_SERVER.into()));
+            }
+            update(
+                session,
+                &server,
+                url.as_deref(),
+                display_name.as_deref(),
+                description.as_deref(),
+            )
+            .await
+        }
+        Action::RevokeUser { sub } => {
+            let r = session
+                .call_tool("revoke_user_access", json!({"sub": sub}))
+                .await?;
+            Ok(Outcome::says(
+                format!("Revoked {sub}: {}", revoke_summary(&r)),
+                r,
+            ))
+        }
         Action::Refresh { server } => refresh(session, server.as_deref(), false).await,
         Action::ApproveScopes { server } => refresh(session, Some(&server), true).await,
         Action::Status { server, status } => {
@@ -209,6 +283,85 @@ pub async fn run(session: &Session, action: Action) -> GatewayResult<Outcome> {
             ))
         }
     }
+}
+
+/// The admin tool that edits a registration in place (newer gateways).
+pub const UPDATE_SERVER: &str = "update_server";
+
+/// `update_server`: changes only the fields given, keeping the id, status,
+/// access, timeout, auth, tool classes and approved scopes. A new URL is
+/// probed first; if the probe fails nothing changes and the tool says why.
+pub async fn update(
+    session: &Session,
+    server: &str,
+    url: Option<&str>,
+    display_name: Option<&str>,
+    description: Option<&str>,
+) -> GatewayResult<Outcome> {
+    let mut args = json!({"server": server});
+    for (key, value) in [
+        ("url", url),
+        ("display_name", display_name),
+        ("description", description),
+    ] {
+        if let Some(value) = value {
+            args[key] = json!(value);
+        }
+    }
+    let r = session.call_tool(UPDATE_SERVER, args).await?;
+    let changes: Vec<String> = r["changed"]
+        .as_object()
+        .map(|changed| {
+            changed
+                .iter()
+                .map(|(field, c)| format!("{field} {} -> {}", str_of(c, "was"), str_of(c, "now")))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut message = if changes.is_empty() {
+        format!("{server}: nothing changed")
+    } else {
+        format!("{server}: {}", changes.join("; "))
+    };
+    let mut drift = Vec::new();
+    if let Some(refresh) = r.get("refresh").filter(|v| !v.is_null()) {
+        let found: Option<ScopeDrift> = serde_json::from_value(refresh["scope_drift"].clone()).ok();
+        if refresh["ok"] == json!(false) {
+            message.push_str(&format!("; refresh failed: {}", str_of(refresh, "error")));
+        } else if refresh.get("tools").is_some() {
+            message.push_str(&format!("; refreshed, {} tools", refresh["tools"]));
+        }
+        if found.is_some() {
+            message.push_str(&format!("; scope drift on {server} (A to review)"));
+        }
+        drift.push((server.to_string(), found));
+    }
+    Ok(Outcome {
+        message,
+        drift,
+        raw: r,
+    })
+}
+
+/// `revoke_user_access`'s counts, in words.
+pub fn revoke_summary(r: &Value) -> String {
+    let count = |key: &str| match &r[key] {
+        Value::Array(a) => a.len().to_string(),
+        Value::Null => "0".into(),
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let connection = match &r["okta_user_connection_removed"] {
+        Value::Bool(true) => "user connection removed".to_string(),
+        Value::Bool(false) | Value::Null => "no user connection".to_string(),
+        other => format!("user connections removed {other}"),
+    };
+    format!(
+        "{} grants revoked, {} clients, {} login tokens removed, {connection}",
+        count("grants_revoked"),
+        count("clients"),
+        count("login_tokens_removed"),
+    )
 }
 
 async fn register(

@@ -119,7 +119,8 @@ async fn policy_screen_shows_mode_events_and_the_selected_event() {
     let env = Env::new().await;
     let mut h = env.harness(WIDE).await;
     load(&mut h).await;
-    h.press("shift+tab");
+    h.press("tab");
+    h.press("tab");
     assert_eq!(gw(&h.app).screen, Screen::Policy);
     h.until_text("Events").await;
     let text = h.text();
@@ -166,9 +167,15 @@ async fn view_only_never_asks_for_admin_tools() {
     h.until_text("Usage needs gateway:admin").await;
     h.press("tab");
     h.until_text("Policy needs gateway:admin").await;
+    h.press("tab");
+    h.until_text("Scopes needs gateway:admin").await;
+    h.press("tab");
+    h.until_text("Connections needs gateway:admin").await;
     h.settle().await;
     assert_eq!(env.called("usage_stats"), 0);
     assert_eq!(env.called("policy_events"), 0);
+    assert_eq!(env.called("list_scope_owners"), 0);
+    assert_eq!(env.called("list_connections"), 0);
     // The servers screen still works.
     h.press("tab");
     assert!(h.text().contains("Servers (4)"));

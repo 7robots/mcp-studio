@@ -8,9 +8,11 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::KeyEvent;
 use ratatui::style::Color;
+use serde_json::Value;
 use studio_gateway::actions::{self, Action, Outcome, ScopeDrift};
 use studio_gateway::model::{
-    Identity, POLICY_RETENTION_DAYS, PolicyEvents, Server, ServerList, UsageStats,
+    Connection, Health, Identity, POLICY_RETENTION_DAYS, PolicyEvents, ScopeOwner, Server,
+    ServerList, UsageStats, render_result,
 };
 use studio_gateway::{GatewayError, GatewayResult, Session, Url};
 use tokio::task::AbortHandle;
@@ -34,16 +36,37 @@ pub enum Screen {
     Servers,
     Usage,
     Policy,
+    Scopes,
+    Connections,
 }
 
 impl Screen {
-    pub const ALL: [Screen; 3] = [Screen::Servers, Screen::Usage, Screen::Policy];
+    pub const ALL: [Screen; 5] = [
+        Screen::Servers,
+        Screen::Usage,
+        Screen::Policy,
+        Screen::Scopes,
+        Screen::Connections,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
             Screen::Servers => "Servers",
             Screen::Usage => "Usage",
             Screen::Policy => "Policy",
+            Screen::Scopes => "Scopes",
+            Screen::Connections => "Connections",
+        }
+    }
+
+    /// The admin tool behind the screen.
+    pub fn tool(self) -> &'static str {
+        match self {
+            Screen::Servers => "list_servers",
+            Screen::Usage => "usage_stats",
+            Screen::Policy => "policy_events",
+            Screen::Scopes => "list_scope_owners",
+            Screen::Connections => "list_connections",
         }
     }
 
@@ -72,6 +95,23 @@ pub(crate) enum PaneMsg {
         generation: u64,
         result: GatewayResult<PolicyEvents>,
     },
+    Health {
+        generation: u64,
+        result: GatewayResult<Health>,
+    },
+    Scopes {
+        generation: u64,
+        result: GatewayResult<Vec<ScopeOwner>>,
+    },
+    Connections {
+        generation: u64,
+        result: GatewayResult<Vec<Connection>>,
+    },
+    /// A `call_tool` console call finished.
+    Called {
+        title: String,
+        result: GatewayResult<Value>,
+    },
     Action {
         result: GatewayResult<Outcome>,
     },
@@ -98,7 +138,59 @@ pub(crate) enum Purpose {
     },
     /// A confirmation that runs this action.
     Run(Action),
+    EditDetails(Box<Server>),
+    /// The revoke form (an Okta `sub`).
+    Revoke,
+    /// The console: which server.
+    CallServer(Vec<String>),
+    /// The console: which tool; `all` when write tools are listed too.
+    CallTool {
+        server: String,
+        tools: Vec<(String, String)>,
+        all: bool,
+    },
+    /// The console: the arguments.
+    CallArgs {
+        server: String,
+        tool: String,
+        class: String,
+    },
+    /// The console: a confirmation before a tool that is not classified read.
+    CallConfirm {
+        server: String,
+        tool: String,
+        args: Value,
+    },
 }
+
+/// A scrollable text result (the console's, a revocation's).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Viewer {
+    pub title: String,
+    pub lines: Vec<String>,
+    pub scroll: usize,
+    /// Shown in red: the call failed.
+    pub error: bool,
+}
+
+impl Viewer {
+    pub fn new(title: impl Into<String>, text: &str, error: bool) -> Viewer {
+        Viewer {
+            title: title.into(),
+            lines: text.lines().map(str::to_string).collect(),
+            scroll: 0,
+            error,
+        }
+    }
+
+    fn scroll_by(&mut self, by: isize) {
+        let max = self.lines.len().saturating_sub(1) as isize;
+        self.scroll = (self.scroll as isize + by).clamp(0, max.max(0)) as usize;
+    }
+}
+
+/// Rows a viewer page scrolls.
+const PAGE: isize = 20;
 
 /// A browser sign-in in progress.
 #[derive(Debug)]
@@ -116,6 +208,15 @@ pub struct Pane {
     pub servers: Slot<ServerList>,
     pub usage: Slot<UsageStats>,
     pub policy: Slot<PolicyEvents>,
+    pub health: Slot<Health>,
+    pub scopes: Slot<Vec<ScopeOwner>>,
+    pub connections: Slot<Vec<Connection>>,
+    /// The console's result, while open.
+    pub viewer: Option<Viewer>,
+    pub scope_selected: usize,
+    pub connection_selected: usize,
+    /// Connections shown: every kind, or one.
+    pub connection_kind: Option<String>,
     /// Index into the servers table.
     pub selected: usize,
     /// Index into the policy event table.
@@ -147,6 +248,13 @@ impl Pane {
             servers: Slot::default(),
             usage: Slot::default(),
             policy: Slot::default(),
+            health: Slot::default(),
+            scopes: Slot::default(),
+            connections: Slot::default(),
+            viewer: None,
+            scope_selected: 0,
+            connection_selected: 0,
+            connection_kind: None,
             selected: 0,
             event_selected: 0,
             usage_days: 7,
@@ -197,6 +305,30 @@ impl Pane {
         self.servers.data.as_ref()?.servers.get(self.selected)
     }
 
+    /// Whether the gateway offered this caller `tool`; `None` before `whoami`.
+    pub fn offers(&self, tool: &str) -> Option<bool> {
+        self.identity.data.as_ref().map(|i| i.offers(tool))
+    }
+
+    /// The connections the kind filter lets through.
+    pub fn shown_connections(&self) -> Vec<&Connection> {
+        self.connections
+            .data
+            .iter()
+            .flatten()
+            .filter(|c| {
+                self.connection_kind
+                    .as_deref()
+                    .is_none_or(|k| c.kind.as_deref() == Some(k))
+            })
+            .collect()
+    }
+
+    /// The gateway's build, once `health` reported one.
+    pub fn build(&self) -> Option<&studio_gateway::model::BuildInfo> {
+        self.health.data.as_ref()?.build.as_ref()
+    }
+
     pub(crate) fn keymap(&self, gateways: usize) -> crate::framework::keymap::Keymap<Key> {
         keys::keymap(keys::Context {
             screen: self.screen,
@@ -204,6 +336,7 @@ impl Pane {
             signed_out: self.signed_out.is_some(),
             signing_in: self.login.is_some(),
             gateways,
+            viewing: self.viewer.is_some(),
         })
     }
 
@@ -214,6 +347,7 @@ impl Pane {
         self.started = true;
         self.load_identity(cx);
         self.load_servers(cx);
+        self.load_health(cx);
         self.schedule_poll(Instant::now());
     }
 
@@ -277,20 +411,58 @@ impl Pane {
         });
     }
 
+    fn load_health(&mut self, cx: &Cx<'_>) {
+        let generation = self.health.begin();
+        let session = self.session.clone();
+        self.spawn(cx, async move {
+            PaneMsg::Health {
+                generation,
+                result: session.health().await,
+            }
+        });
+    }
+
+    fn load_scopes(&mut self, cx: &Cx<'_>) {
+        let generation = self.scopes.begin();
+        let session = self.session.clone();
+        self.spawn(cx, async move {
+            PaneMsg::Scopes {
+                generation,
+                result: session.list_scope_owners().await,
+            }
+        });
+    }
+
+    fn load_connections(&mut self, cx: &Cx<'_>) {
+        let generation = self.connections.begin();
+        let session = self.session.clone();
+        self.spawn(cx, async move {
+            PaneMsg::Connections {
+                generation,
+                result: session.list_connections(None).await,
+            }
+        });
+    }
+
     /// Loads the current screen's data, if the caller may read it. An admin-only
-    /// screen waits for `whoami`, and is never requested for a view-only token.
+    /// screen waits for `whoami`, and is never requested for a view-only token
+    /// or from a gateway that does not offer its tool.
     fn load_screen(&mut self, cx: &Cx<'_>) {
         match self.screen {
             Screen::Servers => self.load_servers(cx),
             _ if self.admin() != Some(true) => {}
+            screen if self.offers(screen.tool()) == Some(false) => {}
             Screen::Usage => self.load_usage(cx),
             Screen::Policy => self.load_policy(cx),
+            Screen::Scopes => self.load_scopes(cx),
+            Screen::Connections => self.load_connections(cx),
         }
     }
 
     pub(crate) fn reload(&mut self, cx: &Cx<'_>) {
         self.signed_out = None;
         self.load_identity(cx);
+        self.load_health(cx);
         self.load_screen(cx);
         if self.screen != Screen::Servers {
             self.load_servers(cx);
@@ -319,9 +491,47 @@ impl Pane {
                 self.event_selected = self.event_selected.min(count.saturating_sub(1));
                 error
             }
+            PaneMsg::Health { generation, result } => {
+                // Build info is decoration: a failure is not worth a banner.
+                self.health.finish(generation, result).and(None)
+            }
+            PaneMsg::Scopes { generation, result } => {
+                let error = self.scopes.finish(generation, result);
+                let count = self.scopes.data.as_ref().map_or(0, Vec::len);
+                self.scope_selected = self.scope_selected.min(count.saturating_sub(1));
+                error
+            }
+            PaneMsg::Connections { generation, result } => {
+                let error = self.connections.finish(generation, result);
+                let count = self.shown_connections().len();
+                self.connection_selected = self.connection_selected.min(count.saturating_sub(1));
+                error
+            }
+            PaneMsg::Called { title, result } => {
+                self.busy = false;
+                match result {
+                    Ok(value) => {
+                        cx.toast(format!("{title} returned (j/k scroll, Esc closes)"));
+                        self.viewer = Some(Viewer::new(title, &render_result(&value), false));
+                        None
+                    }
+                    Err(err) => {
+                        let text = match &err {
+                            GatewayError::Tool(message) => message.clone(),
+                            other => other.to_string(),
+                        };
+                        self.fail(&err, cx);
+                        self.viewer = Some(Viewer::new(format!("{title}: failed"), &text, true));
+                        Some(err)
+                    }
+                }
+            }
             PaneMsg::Action { result } => {
                 self.busy = false;
                 self.load_servers(cx);
+                if self.screen == Screen::Connections {
+                    self.load_connections(cx);
+                }
                 match result {
                     Ok(outcome) => {
                         for (server, drift) in outcome.drift {
@@ -445,6 +655,23 @@ impl Pane {
             self.overlay_key(key, cx);
             return Handled::Yes;
         }
+        if self.viewer.is_some() {
+            let resolved = self.keymap(gateways).resolve(&key);
+            let Some(viewer) = &mut self.viewer else {
+                return Handled::Yes;
+            };
+            match resolved {
+                Some(Key::ScrollDown) => viewer.scroll_by(1),
+                Some(Key::ScrollUp) => viewer.scroll_by(-1),
+                Some(Key::PageDown) => viewer.scroll_by(PAGE),
+                Some(Key::PageUp) => viewer.scroll_by(-PAGE),
+                Some(Key::Top) => viewer.scroll = 0,
+                Some(Key::Bottom) => viewer.scroll_by(isize::MAX / 2),
+                Some(Key::CloseViewer) => self.viewer = None,
+                _ => {}
+            }
+            return Handled::Yes;
+        }
         let Some(action) = self.keymap(gateways).resolve(&key) else {
             return Handled::No;
         };
@@ -472,6 +699,8 @@ impl Pane {
                 self.event_selected = 0;
                 self.load_screen(cx);
             }
+            Key::KindFilter => self.cycle_kind(cx),
+            Key::CallTool => self.open_console(cx),
             admin => self.admin_key(admin, cx),
         }
         Handled::Yes
@@ -494,6 +723,8 @@ impl Pane {
             Screen::Servers => self.servers.data.is_some(),
             Screen::Usage => self.usage.data.is_some(),
             Screen::Policy => self.policy.data.is_some(),
+            Screen::Scopes => self.scopes.data.is_some(),
+            Screen::Connections => self.connections.data.is_some(),
         };
         if !loaded {
             self.load_screen(cx);
@@ -516,9 +747,35 @@ impl Pane {
                     POLICY_RETENTION_DAYS
                 };
             }
-            Screen::Servers => return,
+            _ => return,
         }
         self.load_screen(cx);
+    }
+
+    /// Every kind, then each kind the list holds, in turn.
+    fn cycle_kind(&mut self, cx: &mut Cx<'_>) {
+        let mut kinds: Vec<String> = self
+            .connections
+            .data
+            .iter()
+            .flatten()
+            .filter_map(|c| c.kind.clone())
+            .collect();
+        kinds.sort();
+        kinds.dedup();
+        let next = match &self.connection_kind {
+            None => kinds.first().cloned(),
+            Some(kind) => {
+                let at = kinds.iter().position(|k| k == kind);
+                at.and_then(|i| kinds.get(i + 1)).cloned()
+            }
+        };
+        self.connection_kind = next;
+        self.connection_selected = 0;
+        cx.toast(format!(
+            "Showing {} connections",
+            self.connection_kind.as_deref().unwrap_or("all")
+        ));
     }
 
     fn move_selection(&mut self, by: isize) {
@@ -531,6 +788,14 @@ impl Pane {
                 &mut self.event_selected,
                 self.policy.data.as_ref().map_or(0, |p| p.events.len()),
             ),
+            Screen::Scopes => (
+                &mut self.scope_selected,
+                self.scopes.data.as_ref().map_or(0, Vec::len),
+            ),
+            Screen::Connections => {
+                let count = self.shown_connections().len();
+                (&mut self.connection_selected, count)
+            }
             Screen::Usage => return,
         };
         if count == 0 {
@@ -577,6 +842,20 @@ impl Pane {
                 return self.open(Overlay::Form(form), Purpose::Register);
             }
             Key::RefreshAll => return self.run(Action::Refresh { server: None }, cx),
+            Key::RevokeUser => {
+                let prefill = self
+                    .shown_connections()
+                    .get(self.connection_selected)
+                    .filter(|c| c.kind.as_deref() != Some("api_key"))
+                    .map(|c| c.subject.clone())
+                    .unwrap_or_default();
+                let form = Form::new("Revoke a user's access").field(
+                    "sub",
+                    "the user's identity provider subject (sub)",
+                    &prefill,
+                );
+                return self.open(Overlay::Form(form), Purpose::Revoke);
+            }
             _ => {}
         }
         let Some(server) = self.selected_server().cloned() else {
@@ -596,6 +875,23 @@ impl Pane {
                 let form =
                     Form::new(format!("New URL for {id}")).field("URL", "https://", &server.url);
                 self.open(Overlay::Form(form), Purpose::ChangeUrl(Box::new(server)));
+            }
+            Key::EditDetails => {
+                if self.offers(actions::UPDATE_SERVER) != Some(true) {
+                    cx.toast(format!(
+                        "Editing details needs {}, which this gateway does not offer",
+                        actions::UPDATE_SERVER
+                    ));
+                    return;
+                }
+                let form = Form::new(format!("Details of {id}"))
+                    .field("display name", "shown in list_servers", &server.name)
+                    .field(
+                        "description",
+                        "the server's own replaces it on refresh",
+                        server.description.as_deref().unwrap_or(""),
+                    );
+                self.open(Overlay::Form(form), Purpose::EditDetails(Box::new(server)));
             }
             Key::RefreshOne => self.run(Action::Refresh { server: Some(id) }, cx),
             Key::Approve => match self.drift.get(&id) {
@@ -692,6 +988,100 @@ impl Pane {
         }
     }
 
+    // -- the call_tool console ----------------------------------------------
+
+    fn open_console(&mut self, cx: &mut Cx<'_>) {
+        if self.identity.data.is_none() {
+            cx.toast("Sign in first (L)");
+            return;
+        }
+        if self.busy {
+            cx.toast("Still working on the last change");
+            return;
+        }
+        let servers: Vec<&Server> = self
+            .servers
+            .data
+            .iter()
+            .flat_map(|l| l.servers.iter())
+            .filter(|s| s.status == "active")
+            .collect();
+        if servers.is_empty() {
+            cx.toast("No active server to call");
+            return;
+        }
+        let current = self.selected_server().map(|s| s.id.clone());
+        let at = servers
+            .iter()
+            .position(|s| Some(&s.id) == current.as_ref())
+            .unwrap_or(0);
+        let items = servers
+            .iter()
+            .map(|s| {
+                PickItem::tagged(
+                    &s.id,
+                    format!("{} tools", s.tool_classes.len()),
+                    Color::DarkGray,
+                )
+            })
+            .collect();
+        let ids = servers.iter().map(|s| s.id.clone()).collect();
+        let picker = Picker::new("Call a tool: which server", items, "pick").with_selected(at);
+        self.open(Overlay::Picker(picker), Purpose::CallServer(ids));
+    }
+
+    /// The tool picker for `server`: tools classified read, plus an entry that
+    /// lists the rest; `all` lists every tool.
+    fn pick_tool(&mut self, server: String, all: bool, cx: &mut Cx<'_>) {
+        let Some(entry) = self
+            .servers
+            .data
+            .as_ref()
+            .and_then(|l| l.servers.iter().find(|s| s.id == server))
+        else {
+            return;
+        };
+        let tools: Vec<(String, String)> = entry
+            .tool_classes
+            .iter()
+            .filter(|t| all || t.classification == "read")
+            .map(|t| (t.name.clone(), t.classification.clone()))
+            .collect();
+        let rest = entry.tool_classes.len() - tools.len();
+        if tools.is_empty() && rest == 0 {
+            cx.toast(format!("{server} has no tools in the catalogue"));
+            return;
+        }
+        let mut items: Vec<PickItem> = tools
+            .iter()
+            .map(|(name, class)| PickItem::tagged(name, class, class_color(class)))
+            .collect();
+        if !all && rest > 0 {
+            items.push(PickItem::tagged(
+                format!("... {rest} more not classified read"),
+                "asks first",
+                Color::Yellow,
+            ));
+        }
+        let picker = Picker::new(format!("Call a tool on {server}"), items, "pick");
+        self.open(
+            Overlay::Picker(picker),
+            Purpose::CallTool { server, tools, all },
+        );
+    }
+
+    fn call(&mut self, server: String, tool: String, args: Value, cx: &mut Cx<'_>) {
+        self.busy = true;
+        cx.toast(format!("Calling {server}.{tool}..."));
+        let session = self.session.clone();
+        self.spawn(cx, async move {
+            PaneMsg::Called {
+                title: format!("{server}.{tool}"),
+                result: session.call_downstream(&server, &tool, args).await,
+            }
+        });
+    }
+
     fn run(&mut self, action: Action, cx: &mut Cx<'_>) {
         self.busy = true;
         cx.toast(format!("{}...", action.describe()));
@@ -718,29 +1108,87 @@ impl Pane {
         match (purpose, answer) {
             (purpose, Answer::Values(values)) => match form_action(&purpose, &values) {
                 Ok(Some(action)) => self.run(action, cx),
-                Ok(None) => {
-                    if let Purpose::ChangeUrl(server) = purpose {
+                Ok(None) => match purpose {
+                    Purpose::ChangeUrl(server) => {
                         let url = values[0].trim().to_string();
                         let id = server.id.clone();
-                        let confirm = Confirm::typed(
-                            format!("Move {id}"),
-                            vec![
-                                format!("from  {}", server.url),
-                                format!("to    {url}"),
-                                String::new(),
+                        let mut lines = vec![
+                            format!("from  {}", server.url),
+                            format!("to    {url}"),
+                            String::new(),
+                        ];
+                        if self.offers(actions::UPDATE_SERVER) == Some(true) {
+                            lines.push(
+                                "Updates it in place after probing the new URL; if the probe"
+                                    .into(),
+                            );
+                            lines.push("fails nothing changes. Type its id to confirm.".into());
+                        } else {
+                            lines.push(
                                 "Unregisters and re-registers under the same id, then restores its"
                                     .into(),
+                            );
+                            lines.push(
                                 "status, access and classifications. Type its id to confirm."
                                     .into(),
-                            ],
-                            id,
-                        );
+                            );
+                        }
+                        let confirm = Confirm::typed(format!("Move {id}"), lines, id);
                         self.open(
                             Overlay::Confirm(confirm),
                             Purpose::Run(Action::ChangeUrl { server, url }),
                         );
                     }
-                }
+                    Purpose::Revoke => {
+                        let sub = values[0].trim().to_string();
+                        let confirm = Confirm::typed(
+                            format!("Revoke {sub}"),
+                            vec![
+                                format!(
+                                    "Revokes every grant and client the gateway holds for {sub},"
+                                ),
+                                "removes their login tokens and their stored user connection."
+                                    .into(),
+                                "They must sign in again. Type the sub to confirm.".into(),
+                            ],
+                            sub.clone(),
+                        );
+                        self.open(
+                            Overlay::Confirm(confirm),
+                            Purpose::Run(Action::RevokeUser { sub }),
+                        );
+                    }
+                    Purpose::CallArgs {
+                        server,
+                        tool,
+                        class,
+                    } => {
+                        let args: Value =
+                            serde_json::from_str(values[0].trim()).expect("validated");
+                        if class == "read" {
+                            self.call(server, tool, args, cx);
+                        } else {
+                            let pretty = serde_json::to_string(&args).unwrap_or_default();
+                            let mut lines = vec![
+                                format!("{server}.{tool} is classified {class}."),
+                                format!("args  {pretty}"),
+                                String::new(),
+                            ];
+                            let confirm = if class == "destructive" {
+                                lines.push("Type the tool name to call it.".into());
+                                Confirm::typed(format!("Call {tool}"), lines, tool.clone())
+                            } else {
+                                lines.push("Call it?".into());
+                                Confirm::new(format!("Call {tool}"), lines)
+                            };
+                            self.open(
+                                Overlay::Confirm(confirm),
+                                Purpose::CallConfirm { server, tool, args },
+                            );
+                        }
+                    }
+                    _ => {}
+                },
                 Err(message) => {
                     if let Overlay::Form(form) = &mut overlay {
                         form.set_error(message);
@@ -781,6 +1229,35 @@ impl Pane {
                 self.open(Overlay::Choice(choice), Purpose::Class { server, tool });
             }
             (Purpose::Run(action), Answer::Confirmed) => self.run(action, cx),
+            (Purpose::CallConfirm { server, tool, args }, Answer::Confirmed) => {
+                self.call(server, tool, args, cx)
+            }
+            (Purpose::CallServer(ids), Answer::Picked(i)) => {
+                if let Some(server) = ids.get(i).cloned() {
+                    self.pick_tool(server, false, cx);
+                }
+            }
+            (Purpose::CallTool { server, tools, all }, Answer::Picked(i)) => {
+                match tools.get(i).cloned() {
+                    Some((tool, class)) => {
+                        let form = Form::new(format!("Call {server}.{tool} ({class})")).field(
+                            "args",
+                            "a JSON object",
+                            "{}",
+                        );
+                        self.open(
+                            Overlay::Form(form),
+                            Purpose::CallArgs {
+                                server,
+                                tool,
+                                class,
+                            },
+                        );
+                    }
+                    None if !all => self.pick_tool(server, true, cx),
+                    None => {}
+                }
+            }
             _ => {}
         }
     }
@@ -838,6 +1315,33 @@ fn form_action(purpose: &Purpose, fields: &[String]) -> Result<Option<Action>, S
             }
             Ok(None)
         }
+        Purpose::EditDetails(server) => {
+            let name = value(0);
+            let description = value(1);
+            let name = Some(name).filter(|n| !n.is_empty() && *n != server.name);
+            let description = Some(description)
+                .filter(|d| !d.is_empty() && Some(d.as_str()) != server.description.as_deref());
+            if name.is_none() && description.is_none() {
+                return Err("nothing changed".into());
+            }
+            Ok(Some(Action::UpdateDetails {
+                server: server.id.clone(),
+                display_name: name,
+                description,
+            }))
+        }
+        Purpose::Revoke => {
+            let sub = value(0);
+            if sub.is_empty() || sub.contains(char::is_whitespace) {
+                return Err("enter one subject (sub), no spaces".into());
+            }
+            Ok(None)
+        }
+        Purpose::CallArgs { .. } => match serde_json::from_str::<Value>(&value(0)) {
+            Ok(Value::Object(_)) => Ok(None),
+            Ok(_) => Err("args must be a JSON object, like {} or {\"q\": \"x\"}".into()),
+            Err(e) => Err(format!("not JSON: {e}")),
+        },
         _ => Ok(None),
     }
 }

@@ -353,3 +353,221 @@ async fn change_url_reports_its_steps_as_json() {
     let moved = again.servers.iter().find(|s| s.id == "weather").unwrap();
     assert_eq!(moved.status, "disabled");
 }
+
+fn legacy() -> Options {
+    Options {
+        legacy: true,
+        ..Options::default()
+    }
+}
+
+#[tokio::test]
+async fn identity_lists_the_offered_tools_and_health_the_build() {
+    let env = Env::new().await;
+    let session = env.signed_in().await;
+    let identity = session.identity().await.unwrap();
+    assert!(identity.offers("update_server") && identity.offers("list_connections"));
+    let build = session.health().await.unwrap().build.unwrap();
+    assert_eq!(build.version, "1.8.0");
+    assert_eq!(build.sha.as_deref(), Some("3f2a9c1e7d"));
+    let list = session.list_servers(true, false).await.unwrap();
+    let notes = list.servers.iter().find(|s| s.id == "notes").unwrap();
+    assert_eq!(notes.server_version.as_deref(), Some("0.3.0"));
+    assert_eq!(notes.registered_by.as_deref(), Some("admin@example.org"));
+    assert!(notes.registered_at.is_some());
+
+    let old = Env::with(legacy()).await;
+    let session = old.signed_in().await;
+    let identity = session.identity().await.unwrap();
+    assert!(identity.admin && !identity.offers("update_server"));
+    assert!(session.health().await.unwrap().build.is_none());
+    let list = session.list_servers(true, false).await.unwrap();
+    assert!(list.servers.iter().all(|s| s.server_version.is_none()));
+}
+
+#[tokio::test]
+async fn scope_owners_and_connections() {
+    let env = Env::new().await;
+    let session = env.signed_in().await;
+    let owners = session.list_scope_owners().await.unwrap();
+    assert!(
+        owners
+            .iter()
+            .any(|o| o.scope == "tasks:all" && o.server == "tasks")
+    );
+    assert_eq!(session.list_connections(None).await.unwrap().len(), 3);
+    let keys = session.list_connections(Some("api_key")).await.unwrap();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0].subject, "tasks");
+
+    let old = Env::with(legacy()).await;
+    let session = old.signed_in().await;
+    let err = session.list_scope_owners().await.unwrap_err();
+    assert!(
+        matches!(err, GatewayError::Unsupported(ref t) if t == "list_scope_owners"),
+        "{err:?}"
+    );
+    assert_eq!(
+        session
+            .list_connections(None)
+            .await
+            .unwrap_err()
+            .to_string(),
+        "list_connections is not supported by this gateway"
+    );
+    assert_eq!(
+        old.fake
+            .log()
+            .iter()
+            .filter(|l| l.starts_with("mcp:tools/call:list_"))
+            .filter(|l| !l.ends_with("list_servers"))
+            .count(),
+        0,
+        "never called a tool the gateway does not offer"
+    );
+}
+
+#[tokio::test]
+async fn change_url_uses_update_server_when_offered_and_falls_back_otherwise() {
+    use studio_gateway::actions::{Action, run};
+    let env = Env::new().await;
+    let session = env.signed_in().await;
+    let notes = session
+        .list_servers(true, true)
+        .await
+        .unwrap()
+        .servers
+        .into_iter()
+        .find(|s| s.id == "notes")
+        .unwrap();
+    let outcome = run(
+        &session,
+        Action::ChangeUrl {
+            server: Box::new(notes.clone()),
+            url: "https://notes2.mcp.example.org/mcp".into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        outcome.raw["changed"]["url"]["was"],
+        "https://notes.mcp.example.org/mcp"
+    );
+    assert_eq!(outcome.drift, vec![("notes".to_string(), None)]);
+    let log = env.fake.log();
+    assert!(!log.iter().any(|l| l.ends_with(":unregister_server")));
+    // update_server kept the admin classifications.
+    let after = session.list_servers(true, true).await.unwrap();
+    let moved = after.servers.iter().find(|s| s.id == "notes").unwrap();
+    assert_eq!(moved.tool_classes, notes.tool_classes);
+    assert!(moved.read_only());
+
+    // A failed probe changes nothing.
+    let err = run(
+        &session,
+        Action::Update {
+            server: "notes".into(),
+            url: Some("https://fail.example.org/mcp".into()),
+            display_name: Some("Renamed".into()),
+            description: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("probe failed"), "{err}");
+    let after = session.list_servers(true, false).await.unwrap();
+    let same = after.servers.iter().find(|s| s.id == "notes").unwrap();
+    assert_eq!(
+        (same.url.as_str(), same.name.as_str()),
+        ("https://notes2.mcp.example.org/mcp", "Notes")
+    );
+
+    let old = Env::with(legacy()).await;
+    let session = old.signed_in().await;
+    let weather = session
+        .list_servers(true, true)
+        .await
+        .unwrap()
+        .servers
+        .into_iter()
+        .find(|s| s.id == "weather")
+        .unwrap();
+    let outcome = run(
+        &session,
+        Action::ChangeUrl {
+            server: Box::new(weather),
+            url: "https://weather2.example.com/mcp".into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.raw["now"], "https://weather2.example.com/mcp");
+    assert!(
+        old.fake
+            .log()
+            .iter()
+            .any(|l| l.ends_with(":unregister_server"))
+    );
+    let err = run(
+        &session,
+        Action::UpdateDetails {
+            server: "weather".into(),
+            display_name: Some("W".into()),
+            description: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, GatewayError::Unsupported(_)), "{err:?}");
+}
+
+#[tokio::test]
+async fn revoke_user_and_call_downstream() {
+    use studio_gateway::actions::{Action, run};
+    let env = Env::new().await;
+    let session = env.signed_in().await;
+    let outcome = run(
+        &session,
+        Action::RevokeUser {
+            sub: studio_fake::gateway::OTHER_SUB.into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.raw["grants_revoked"], 2);
+    assert!(
+        outcome.message.contains("user connection removed"),
+        "{}",
+        outcome.message
+    );
+    let again = run(
+        &session,
+        Action::RevokeUser {
+            sub: studio_fake::gateway::OTHER_SUB.into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        again
+            .message
+            .contains("0 grants revoked, 0 clients, 0 login tokens removed, no user connection"),
+        "{}",
+        again.message
+    );
+
+    let r = session
+        .call_downstream("notes", "notes_read", json!({"id": 7}))
+        .await
+        .unwrap();
+    let text = studio_gateway::model::render_result(&r);
+    assert!(text.contains("\"id\": 7"), "{text}");
+    let err = session
+        .call_downstream("notes", "notes_create", json!({}))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, GatewayError::Tool(ref m) if m.contains("read-only")),
+        "{err:?}"
+    );
+}

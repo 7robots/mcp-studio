@@ -83,6 +83,7 @@ impl studio_fleet::GatewaySource for GatewayRegistry {
                     auth_mode: s.auth_mode,
                     last_refresh_at: s.last_refresh_at.map(|t| t.to_string()),
                     last_error: s.last_error,
+                    server_version: s.server_version,
                 })
                 .collect())
         })

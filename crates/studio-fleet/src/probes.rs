@@ -798,6 +798,7 @@ pub fn probe_gateway(s: &ServerInfo, list: Result<&[GatewayServerInfo], &str>) -
         ("gateway.access", &e.access),
         ("gateway.auth_mode", &e.auth_mode),
         ("gateway.last_refresh_at", &e.last_refresh_at),
+        ("gateway.version", &e.server_version),
     ] {
         if let Some(v) = v {
             o.fact(k, v.clone());

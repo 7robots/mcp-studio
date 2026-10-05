@@ -51,6 +51,17 @@ pub struct Server {
     /// Present when `list_servers` was asked for `include_tools`.
     #[serde(default)]
     pub tool_classes: Vec<ToolClass>,
+    /// The version the server reported at its last probe; absent from an
+    /// older gateway.
+    #[serde(default)]
+    pub server_version: Option<String>,
+    /// Who registered it; absent from an older gateway.
+    #[serde(default)]
+    pub registered_by: Option<String>,
+    /// When it was registered (the same unit as `last_refresh_at`); absent
+    /// from an older gateway.
+    #[serde(default)]
+    pub registered_at: Option<u64>,
 }
 
 impl Server {
@@ -180,4 +191,179 @@ pub struct Identity {
     /// scope whose `sub` is on its admin allowlist, so admin means
     /// both the scope and the admin probe tool in `tools/list`.
     pub admin: bool,
+    /// Every tool `tools/list` offered this caller: what the gateway supports.
+    pub tools: Vec<String>,
+}
+
+impl Identity {
+    /// Whether the gateway offered this caller `tool`.
+    pub fn offers(&self, tool: &str) -> bool {
+        self.tools.iter().any(|t| t == tool)
+    }
+}
+
+/// The gateway's own build, from `health`; absent from an older gateway.
+#[derive(Clone, Debug, PartialEq, Eq, Default, Deserialize, Serialize)]
+pub struct BuildInfo {
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub sha: Option<String>,
+    #[serde(default)]
+    pub built_at: Option<String>,
+}
+
+impl BuildInfo {
+    /// `1.4.0 (3f2a9c1)`, or as much of it as is known.
+    pub fn label(&self) -> String {
+        let sha = self.sha.as_deref().map(|s| &s[..s.len().min(7)]);
+        match (self.version.is_empty(), sha) {
+            (false, Some(sha)) => format!("{} ({sha})", self.version),
+            (false, None) => self.version.clone(),
+            (true, Some(sha)) => sha.to_string(),
+            (true, None) => "?".into(),
+        }
+    }
+}
+
+/// `health` result. Every field is optional: the shape has grown over time.
+#[derive(Clone, Debug, PartialEq, Default, Deserialize, Serialize)]
+pub struct Health {
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub build: Option<BuildInfo>,
+}
+
+/// One `list_scope_owners` entry: the server that claims a scope.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ScopeOwner {
+    pub scope: String,
+    pub server: String,
+}
+
+/// One `list_connections` entry: metadata about a stored downstream
+/// credential (never the credential itself).
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct Connection {
+    pub subject: String,
+    #[serde(default)]
+    pub issuer: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub version: Option<serde_json::Value>,
+    #[serde(default)]
+    pub key_id: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<serde_json::Value>,
+    #[serde(default)]
+    pub expires_at: Option<serde_json::Value>,
+}
+
+/// A JSON value for a table cell: strings bare, null as `-`.
+pub fn cell(value: Option<&serde_json::Value>) -> String {
+    match value {
+        None | Some(serde_json::Value::Null) => "-".into(),
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+    }
+}
+
+/// A timestamp field as an age (`5m ago`, `in 2h`) when it is epoch seconds
+/// or milliseconds, else as given.
+pub fn when(value: Option<&serde_json::Value>, now: u64) -> String {
+    let Some(n) = value.and_then(serde_json::Value::as_u64) else {
+        return cell(value);
+    };
+    // Milliseconds are 1000x anything plausible in seconds.
+    let secs = if n > 100_000_000_000 { n / 1000 } else { n };
+    if secs > now {
+        format!("in {}", crate::util::span(secs - now))
+    } else {
+        format!("{} ago", crate::util::span(now - secs))
+    }
+}
+
+/// A tool result for a person: the text content (pretty-printed when it is
+/// JSON), else the whole result pretty-printed.
+pub fn render_result(result: &serde_json::Value) -> String {
+    let texts: Vec<String> = result
+        .get("content")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|c| c.get("text").and_then(serde_json::Value::as_str))
+                .map(
+                    |text| match serde_json::from_str::<serde_json::Value>(text) {
+                        Ok(v @ (serde_json::Value::Object(_) | serde_json::Value::Array(_))) => {
+                            serde_json::to_string_pretty(&v).unwrap_or_else(|_| text.to_string())
+                        }
+                        _ => text.to_string(),
+                    },
+                )
+                .collect()
+        })
+        .unwrap_or_default();
+    if !texts.is_empty() {
+        return texts.join("\n\n");
+    }
+    let shown = result.get("structuredContent").unwrap_or(result);
+    serde_json::to_string_pretty(shown).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn older_servers_decode_without_the_new_fields() {
+        let s: Server = serde_json::from_value(json!({
+            "id": "a", "name": "A", "description": null, "url": "https://a.example/mcp", "tools": 1,
+            "status": "active", "timeout_ms": 1000, "health": "ok", "last_refresh_at": null,
+            "last_error": null, "call_failures": 0, "last_call_error": null, "last_call_at": null
+        }))
+        .unwrap();
+        assert_eq!(
+            (s.server_version, s.registered_by, s.registered_at),
+            (None, None, None)
+        );
+    }
+
+    #[test]
+    fn health_and_build_labels() {
+        let h: Health = serde_json::from_value(json!({"status": "ok", "servers": 3})).unwrap();
+        assert!(h.build.is_none());
+        let h: Health = serde_json::from_value(
+            json!({"build": {"version": "1.2.0", "sha": "abcdef0123", "built_at": null}}),
+        )
+        .unwrap();
+        assert_eq!(h.build.unwrap().label(), "1.2.0 (abcdef0)");
+        let b = BuildInfo {
+            version: String::new(),
+            sha: None,
+            built_at: None,
+        };
+        assert_eq!(b.label(), "?");
+    }
+
+    #[test]
+    fn when_reads_seconds_milliseconds_and_text() {
+        let now = 1_800_000_000;
+        assert_eq!(when(Some(&json!(now - 120)), now), "2m ago");
+        assert_eq!(when(Some(&json!((now + 7200) * 1000)), now), "in 2h");
+        assert_eq!(when(Some(&json!("2026-10-01")), now), "2026-10-01");
+        assert_eq!(when(None, now), "-");
+        assert_eq!(cell(Some(&json!(3))), "3");
+    }
+
+    #[test]
+    fn results_render_their_text_pretty() {
+        let r = json!({"content": [{"type": "text", "text": "{\"a\":1}"}, {"type": "text", "text": "plain"}]});
+        assert_eq!(render_result(&r), "{\n  \"a\": 1\n}\n\nplain");
+        let r = json!({"structuredContent": {"b": 2}, "content": []});
+        assert_eq!(render_result(&r), "{\n  \"b\": 2\n}");
+    }
 }

@@ -142,9 +142,11 @@ pub enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Move a server to a new URL: unregister, re-register under the same id,
-    /// restore status, access and classifications; the old registration comes
-    /// back if the new URL is refused (admin). Needs --yes.
+    /// Move a server to a new URL (admin). Needs --yes. With `update_server`
+    /// the registration is edited in place after the new URL is probed; on an
+    /// older gateway it is unregistered and re-registered under the same id,
+    /// with status, access and classifications restored, and the old
+    /// registration comes back if the new URL is refused.
     SetUrl {
         #[command(flatten)]
         pick: Pick,
@@ -152,6 +154,72 @@ pub enum Cmd {
         url: String,
         #[arg(long)]
         yes: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Edit a registration in place: URL, display name, description (admin;
+    /// needs a gateway with update_server). A new URL is probed first; if the
+    /// probe fails nothing changes.
+    Update {
+        #[command(flatten)]
+        pick: Pick,
+        server: String,
+        #[arg(long)]
+        url: Option<String>,
+        /// The display name.
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Which server claims each scope (admin).
+    ScopeOwners {
+        #[command(flatten)]
+        pick: Pick,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stored downstream credentials' metadata, never the credentials (admin).
+    Connections {
+        #[command(flatten)]
+        pick: Pick,
+        /// Only this kind (e.g. okta_user).
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Revoke everything the gateway holds for a user: grants, clients, login
+    /// tokens and their stored user connection (admin). Needs --yes.
+    RevokeUser {
+        #[command(flatten)]
+        pick: Pick,
+        /// The user's identity provider subject.
+        sub: String,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Call a tool on a registered server through the gateway's call_tool.
+    Call {
+        #[command(flatten)]
+        pick: Pick,
+        server: String,
+        tool: String,
+        /// The tool's arguments, a JSON object.
+        #[arg(long, default_value = "{}")]
+        args: String,
+        /// The whole tool result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// The gateway's health and build.
+    Health {
+        #[command(flatten)]
+        pick: Pick,
         #[arg(long)]
         json: bool,
     },
@@ -323,7 +391,13 @@ async fn execute(
         | Cmd::Timeout { pick, json, .. }
         | Cmd::Classify { pick, json, .. }
         | Cmd::Unregister { pick, json, .. }
-        | Cmd::SetUrl { pick, json, .. } => (pick.clone(), *json),
+        | Cmd::SetUrl { pick, json, .. }
+        | Cmd::Update { pick, json, .. }
+        | Cmd::ScopeOwners { pick, json }
+        | Cmd::Connections { pick, json, .. }
+        | Cmd::RevokeUser { pick, json, .. }
+        | Cmd::Call { pick, json, .. }
+        | Cmd::Health { pick, json } => (pick.clone(), *json),
         Cmd::Tui { .. } => bail!("the TUI does not run here"),
     };
     let session = env.pick(&inst, &pick)?;
@@ -502,8 +576,13 @@ async fn execute(
                 bail!("{server} is already at {url}");
             }
             if !yes {
+                let how = if session.supports(actions::UPDATE_SERVER).await? {
+                    "updates its registration in place"
+                } else {
+                    "unregisters and re-registers it"
+                };
                 bail!(
-                    "moving {server} from {} to {url} unregisters and re-registers it; pass --yes to confirm",
+                    "moving {server} from {} to {url} {how}; pass --yes to confirm",
                     current.url
                 );
             }
@@ -511,6 +590,130 @@ async fn execute(
                 server: Box::new(current),
                 url,
             }
+        }
+        Cmd::Update {
+            server,
+            url,
+            name,
+            description,
+            ..
+        } => {
+            if url.is_none() && name.is_none() && description.is_none() {
+                bail!("give at least one of --url, --name, --description");
+            }
+            if let Some(url) = &url
+                && (!url.starts_with("https://") || url.len() <= 8)
+            {
+                bail!("the URL must start with https://");
+            }
+            if !session.supports(actions::UPDATE_SERVER).await? {
+                bail!(
+                    "{gateway} does not offer update_server; for a new URL use `mcp-studio gateway set-url`"
+                );
+            }
+            Action::Update {
+                server,
+                url,
+                display_name: name,
+                description,
+            }
+        }
+        Cmd::RevokeUser { sub, yes, .. } => {
+            if !yes {
+                bail!(
+                    "revoking {sub} removes every grant, client, login token and user connection the gateway holds for them; pass --yes to confirm"
+                );
+            }
+            Action::RevokeUser { sub }
+        }
+        Cmd::ScopeOwners { .. } => {
+            let owners = session.list_scope_owners().await?;
+            if json {
+                let value = serde_json::json!({ "owners": owners });
+                writeln!(out, "{}", serde_json::to_string_pretty(&value)?)?;
+            } else {
+                let width = owners
+                    .iter()
+                    .map(|o| o.scope.len())
+                    .max()
+                    .unwrap_or(5)
+                    .max(5);
+                writeln!(out, "{:width$}  SERVER", "SCOPE")?;
+                for o in &owners {
+                    writeln!(out, "{:width$}  {}", o.scope, o.server)?;
+                }
+            }
+            return Ok(());
+        }
+        Cmd::Connections { kind, .. } => {
+            let connections = session.list_connections(kind.as_deref()).await?;
+            if json {
+                let value = serde_json::json!({ "connections": connections });
+                writeln!(out, "{}", serde_json::to_string_pretty(&value)?)?;
+            } else {
+                use studio_gateway::model::{cell, when};
+                let now = now_unix();
+                let width = connections
+                    .iter()
+                    .map(|c| c.subject.len())
+                    .max()
+                    .unwrap_or(7)
+                    .max(7);
+                writeln!(
+                    out,
+                    "{:width$}  {:10}  {:7}  {:10}  {:10}  EXPIRES",
+                    "SUBJECT", "KIND", "VERSION", "KEY", "UPDATED"
+                )?;
+                for c in &connections {
+                    writeln!(
+                        out,
+                        "{:width$}  {:10}  {:7}  {:10}  {:10}  {}",
+                        c.subject,
+                        c.kind.as_deref().unwrap_or("-"),
+                        cell(c.version.as_ref()),
+                        c.key_id.as_deref().unwrap_or("-"),
+                        when(c.updated_at.as_ref(), now),
+                        when(c.expires_at.as_ref(), now),
+                    )?;
+                }
+            }
+            return Ok(());
+        }
+        Cmd::Call {
+            server, tool, args, ..
+        } => {
+            let args: serde_json::Value =
+                serde_json::from_str(&args).context("--args must be JSON")?;
+            if !args.is_object() {
+                bail!("--args must be a JSON object");
+            }
+            let result = session.call_downstream(&server, &tool, args).await?;
+            if json {
+                writeln!(out, "{}", serde_json::to_string_pretty(&result)?)?;
+            } else {
+                writeln!(out, "{}", studio_gateway::model::render_result(&result))?;
+            }
+            return Ok(());
+        }
+        Cmd::Health { .. } => {
+            let raw = session.health_raw().await?;
+            if json {
+                writeln!(out, "{}", serde_json::to_string_pretty(&raw)?)?;
+            } else {
+                let health: studio_gateway::model::Health =
+                    serde_json::from_value(raw).unwrap_or_default();
+                writeln!(out, "gateway  {} {gateway}", session.profile().id)?;
+                writeln!(out, "status   {}", health.status.as_deref().unwrap_or("-"))?;
+                match &health.build {
+                    Some(build) => {
+                        writeln!(out, "version  {}", build.version)?;
+                        writeln!(out, "sha      {}", build.sha.as_deref().unwrap_or("-"))?;
+                        writeln!(out, "built    {}", build.built_at.as_deref().unwrap_or("-"))?;
+                    }
+                    None => writeln!(out, "build    not reported by this gateway")?,
+                }
+            }
+            return Ok(());
         }
         Cmd::Tui { .. } => unreachable!("handled above"),
     };
@@ -792,14 +995,12 @@ mod tests {
         let r = f
             .json("set-url notes https://notes2.mcp.example.org/mcp --yes --json")
             .await;
-        assert_eq!(r["result"]["now"], "https://notes2.mcp.example.org/mcp");
-        assert!(
-            r["message"]
-                .as_str()
-                .unwrap()
-                .contains("could not restore notes_search=read"),
-            "{r}"
+        assert_eq!(
+            r["result"]["changed"]["url"]["now"],
+            "https://notes2.mcp.example.org/mcp"
         );
+        assert_eq!(r["result"]["refresh"]["ok"], true);
+        assert_eq!(f.calls("mcp:tools/call:unregister_server"), 0);
 
         let r = f.json("unregister weather --yes --json").await;
         assert_eq!(r["result"]["unregistered"], "weather");
@@ -809,6 +1010,129 @@ mod tests {
         assert!(
             format!("{:#}", result.unwrap_err()).contains("outside the gateway's trust perimeter")
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn newer_gateway_tools() {
+        let f = Fixture::new(&[("main", Options::default())]).await;
+        f.ok("login").await;
+
+        let out = f.ok("health").await;
+        assert!(
+            out.contains("version  1.8.0") && out.contains("sha      3f2a9c1e7d"),
+            "{out}"
+        );
+        assert_eq!(f.json("health --json").await["build"]["version"], "1.8.0");
+
+        let r = f
+            .json("update tasks --name Team --description Shared --json")
+            .await;
+        assert_eq!(r["result"]["changed"]["display_name"]["now"], "Team");
+        assert_eq!(r["result"]["changed"]["description"]["was"], "Task lists");
+        let (result, _, _) = f.run("update tasks").await;
+        assert!(format!("{:#}", result.unwrap_err()).contains("at least one of"));
+        let (result, _, _) = f
+            .run("update tasks --url https://fail.example.org/mcp")
+            .await;
+        assert!(format!("{:#}", result.unwrap_err()).contains("probe failed"));
+        let servers = f.json("servers --all --json").await;
+        let tasks = servers["servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == "tasks")
+            .unwrap()
+            .clone();
+        assert_eq!(tasks["url"], "https://tasks.mcp.example.org/mcp");
+        assert_eq!(tasks["name"], "Team");
+
+        let out = f.ok("scope-owners").await;
+        assert!(
+            out.lines()
+                .any(|l| l.starts_with("notes:read") && l.ends_with("notes")),
+            "{out}"
+        );
+        let r = f.json("scope-owners --json").await;
+        assert!(r["owners"].as_array().unwrap().len() >= 4, "{r}");
+
+        let r = f.json("connections --json").await;
+        assert_eq!(r["connections"].as_array().unwrap().len(), 3);
+        let r = f.json("connections --kind api_key --json").await;
+        assert_eq!(r["connections"][0]["subject"], "tasks");
+        let out = f.ok("connections").await;
+        assert!(
+            out.contains("SUBJECT") && out.contains("okta_user"),
+            "{out}"
+        );
+
+        let (result, _, _) = f.run("revoke-user 00ufakereader").await;
+        assert!(format!("{:#}", result.unwrap_err()).contains("--yes"));
+        assert_eq!(f.calls("mcp:tools/call:revoke_user_access"), 0);
+        let r = f.json("revoke-user 00ufakereader --yes --json").await;
+        assert_eq!(r["result"]["grants_revoked"], 2);
+        assert_eq!(r["result"]["okta_user_connection_removed"], true);
+        assert!(
+            r["message"].as_str().unwrap().contains(
+                "2 grants revoked, 1 clients, 1 login tokens removed, user connection removed"
+            ),
+            "{r}"
+        );
+
+        let out = f.ok(r#"call notes notes_search --args {"q":"milk"}"#).await;
+        assert!(out.contains("\"q\": \"milk\""), "{out}");
+        let r = f.json("call notes notes_search --json").await;
+        assert!(
+            r["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("notes_search")
+        );
+        let (result, _, _) = f.run("call notes notes_create").await;
+        assert!(format!("{:#}", result.unwrap_err()).contains("read-only"));
+        let (result, _, _) = f.run("call notes notes_search --args [1]").await;
+        assert!(format!("{:#}", result.unwrap_err()).contains("JSON object"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_older_gateway_falls_back_or_says_so() {
+        let legacy = Options {
+            legacy: true,
+            ..Options::default()
+        };
+        let f = Fixture::new(&[("main", legacy)]).await;
+        f.ok("login").await;
+        assert!(
+            f.ok("health")
+                .await
+                .contains("build    not reported by this gateway")
+        );
+        for args in ["scope-owners", "connections", "update tasks --name X"] {
+            let (result, _, _) = f.run(args).await;
+            let message = format!("{:#}", result.unwrap_err());
+            assert!(
+                message.contains("not supported by this gateway")
+                    || message.contains("does not offer update_server"),
+                "{args}: {message}"
+            );
+        }
+        let (result, _, _) = f
+            .run("set-url notes https://notes2.mcp.example.org/mcp")
+            .await;
+        assert!(format!("{:#}", result.unwrap_err()).contains("unregisters and re-registers"));
+        let r = f
+            .json("set-url notes https://notes2.mcp.example.org/mcp --yes --json")
+            .await;
+        assert_eq!(r["result"]["now"], "https://notes2.mcp.example.org/mcp");
+        assert!(
+            r["message"]
+                .as_str()
+                .unwrap()
+                .contains("could not restore notes_search=read"),
+            "{r}"
+        );
+        // revoke_user_access predates the rest, so it works here too.
+        let r = f.json("revoke-user 00ufakereader --yes --json").await;
+        assert_eq!(r["result"]["clients"], 1);
     }
 
     #[tokio::test(flavor = "multi_thread")]

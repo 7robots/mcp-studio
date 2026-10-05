@@ -9,6 +9,10 @@
 //! `Mcp-Method`/`Mcp-Name`, SSE framing, `isError` tool results, and admin
 //! tools listed only for an allowlisted `sub` holding `gateway:admin`.
 //! Servers persist in an optional JSON state file; OAuth state is in memory.
+//!
+//! [`Options::legacy`] makes it a gateway from before `update_server`,
+//! `list_scope_owners`, `list_connections`, the servers' version and
+//! registration fields and `health`'s build, for compatibility tests.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -50,7 +54,18 @@ pub const ADMIN_TOOLS: &[&str] = &[
     "set_server_status",
     "set_server_access",
     "set_tool_class",
+    "revoke_user_access",
 ];
+/// Admin tools a [`Options::legacy`] gateway does not have.
+pub const NEW_ADMIN_TOOLS: &[&str] = &["update_server", "list_scope_owners", "list_connections"];
+
+/// The fake gateway's build, as `health` reports it.
+pub const BUILD_VERSION: &str = "1.8.0";
+pub const BUILD_SHA: &str = "3f2a9c1e7d";
+
+/// A seeded user other than the signed-in one, with grants and a connection
+/// for `revoke_user_access` to remove.
+pub const OTHER_SUB: &str = "00ufakereader";
 
 #[derive(Clone, Debug)]
 pub struct Options {
@@ -67,6 +82,9 @@ pub struct Options {
     /// Frame `/mcp` answers as `text/event-stream` (the gateway's usual reply).
     pub sse: bool,
     pub state_path: Option<PathBuf>,
+    /// Behave like a gateway from before `update_server` and friends: those
+    /// tools are absent and the newer fields are left out.
+    pub legacy: bool,
 }
 
 impl Default for Options {
@@ -81,6 +99,7 @@ impl Default for Options {
             access_ttl: 3600,
             sse: true,
             state_path: None,
+            legacy: false,
         }
     }
 }
@@ -115,7 +134,24 @@ struct Inner {
     access: HashMap<String, Access>,
     grants: Vec<Grant>,
     servers: Vec<Value>,
+    /// `list_connections` rows.
+    connections: Vec<Value>,
+    /// Per-user OAuth state `revoke_user_access` removes, beyond the real
+    /// grants of the signed-in user: (grants, clients, login tokens).
+    users: HashMap<String, (u64, u64, u64)>,
     log: Vec<String>,
+}
+
+impl Inner {
+    fn offers(&self, tool: &str) -> bool {
+        PUBLIC_TOOLS.contains(&tool)
+            || ADMIN_TOOLS.contains(&tool)
+            || (!self.opts.legacy && NEW_ADMIN_TOOLS.contains(&tool))
+    }
+
+    fn admin_tool(&self, tool: &str) -> bool {
+        ADMIN_TOOLS.contains(&tool) || (!self.opts.legacy && NEW_ADMIN_TOOLS.contains(&tool))
+    }
 }
 
 type Shared = Arc<Mutex<Inner>>;
@@ -198,6 +234,8 @@ fn build(listener: &TcpListener, opts: Options) -> Result<(Url, Shared, Router)>
         access: HashMap::new(),
         grants: Vec::new(),
         servers,
+        connections: seed_connections(),
+        users: HashMap::from([(OTHER_SUB.to_string(), (2, 1, 1))]),
         log: Vec::new(),
     }));
     let app = Router::new()
@@ -271,10 +309,30 @@ pub fn seed_servers() -> Vec<Value> {
                "access": "read_write", "scopes": "scratch:call", "_advertised": "files:write scratch:call",
                "tool_classes": tools(&[("scratch_echo", "unknown", "default"), ("scratch_wipe", "destructive", "annotation")])}),
     ];
-    for server in &mut servers {
+    for (i, server) in servers.iter_mut().enumerate() {
         server["tools"] = json!(server["tool_classes"].as_array().map_or(0, Vec::len));
+        server["server_version"] = if i == 2 {
+            Value::Null
+        } else {
+            json!(format!("0.{}.0", i + 3))
+        };
+        server["registered_by"] = json!("admin@example.org");
+        server["registered_at"] = json!(now - 86400 * (30 - i as u64));
     }
     servers
+}
+
+/// `list_connections` rows: metadata only, never a credential.
+pub fn seed_connections() -> Vec<Value> {
+    let now = now_unix();
+    vec![
+        json!({"subject": "00ufakeadmin", "issuer": "https://idp.example.org/oauth2/default", "kind": "okta_user",
+               "version": 3, "key_id": "k-2026-09", "updated_at": now - 3600, "expires_at": now + 86400 * 30}),
+        json!({"subject": OTHER_SUB, "issuer": "https://idp.example.org/oauth2/default", "kind": "okta_user",
+               "version": 1, "key_id": "k-2026-09", "updated_at": now - 86400 * 2, "expires_at": now + 86400 * 5}),
+        json!({"subject": "tasks", "issuer": "https://tasks.mcp.example.org", "kind": "api_key",
+               "version": 2, "key_id": "k-2026-08", "updated_at": now - 86400 * 20, "expires_at": null}),
+    ]
 }
 
 /// `usage_stats`, in the gateway's shape.
@@ -731,10 +789,7 @@ async fn mcp(State(shared): State<Shared>, headers: HeaderMap, body: String) -> 
     };
     let has_admin_scope = scope.split_whitespace().any(|s| s == ADMIN_SCOPE);
     let mcp_name = header_str("mcp-name");
-    if header_str("mcp-method") == "tools/call"
-        && ADMIN_TOOLS.contains(&mcp_name.as_str())
-        && !has_admin_scope
-    {
+    if header_str("mcp-method") == "tools/call" && inner.admin_tool(&mcp_name) && !has_admin_scope {
         let description = format!("Tool '{mcp_name}' requires the 'gateway:admin' scope.");
         let value = www_authenticate(
             &inner,
@@ -779,14 +834,15 @@ async fn mcp(State(shared): State<Shared>, headers: HeaderMap, body: String) -> 
             let mut tools: Vec<Value> = PUBLIC_TOOLS.iter().map(|t| descriptor(t)).collect();
             if admin {
                 tools.extend(ADMIN_TOOLS.iter().map(|t| descriptor(t)));
+                if !inner.opts.legacy {
+                    tools.extend(NEW_ADMIN_TOOLS.iter().map(|t| descriptor(t)));
+                }
             }
             Ok(json!({ "tools": tools }))
         }
         "tools/call" => {
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
-            if ADMIN_TOOLS.contains(&tool.as_str()) && !admin
-                || !PUBLIC_TOOLS.contains(&tool.as_str()) && !ADMIN_TOOLS.contains(&tool.as_str())
-            {
+            if inner.admin_tool(&tool) && !admin || !inner.offers(&tool) {
                 Err((-32602, format!("Tool {tool} not found")))
             } else {
                 Ok(call(&mut inner, &tool, &args, &scope, &client_id))
@@ -836,23 +892,117 @@ fn save_state(inner: &Inner) {
 
 /// The probe, simplified: an https URL is accepted unless its host says
 /// otherwise (`refuse` is outside the perimeter, `fail` does not answer).
-fn admin_register(inner: &mut Inner, args: &Value) -> Value {
-    let url = args["url"].as_str().unwrap_or_default().to_string();
-    let Some(host) = Url::parse(&url)
+/// Returns the host, or the tool error.
+fn probe(url: &str) -> Result<String, Value> {
+    let Some(host) = Url::parse(url)
         .ok()
         .filter(|u| u.scheme() == "https")
         .and_then(|u| u.host_str().map(str::to_string))
     else {
-        return tool_error("Error: url must be an https URL");
+        return Err(tool_error("Error: url must be an https URL"));
     };
     if host.contains("refuse") {
-        return tool_error(&format!(
+        return Err(tool_error(&format!(
             "Error: {host} is outside the gateway's trust perimeter"
-        ));
+        )));
     }
     if host.contains("fail") {
-        return tool_error(&format!("Error: probe failed: {host} answered HTTP 502"));
+        return Err(tool_error(&format!(
+            "Error: probe failed: {host} answered HTTP 502"
+        )));
     }
+    Ok(host)
+}
+
+/// `update_server`: only the fields given change; a new URL is probed first
+/// and on failure nothing changes. Id, status, access, timeout, auth, tool
+/// classes and approved scopes are kept.
+fn admin_update(inner: &mut Inner, args: &Value) -> Value {
+    let Some(i) = server_index(inner, args) else {
+        let id = args["server"].as_str().unwrap_or_default();
+        return tool_error(&format!(
+            "Error: unknown server \"{id}\" — call list_servers for valid ids"
+        ));
+    };
+    let url = args["url"].as_str();
+    let name = args["display_name"].as_str();
+    let description = args["description"].as_str();
+    if url.is_none() && name.is_none() && description.is_none() {
+        return tool_error("Error: give at least one of url, display_name, description");
+    }
+    if let Some(url) = url
+        && let Err(refused) = probe(url)
+    {
+        return refused;
+    }
+    let now = now_unix();
+    let server = &mut inner.servers[i];
+    let mut changed = serde_json::Map::new();
+    for (field, key, value) in [
+        ("url", "url", url),
+        ("display_name", "name", name),
+        ("description", "description", description),
+    ] {
+        if let Some(value) = value
+            && server[key] != value
+        {
+            changed.insert(field.into(), json!({"was": server[key], "now": value}));
+            server[key] = json!(value);
+        }
+    }
+    let mut result = json!({"server": server["id"], "changed": changed});
+    if url.is_some() && changed.contains_key("url") {
+        server["last_refresh_at"] = json!(now);
+        server["last_error"] = Value::Null;
+        result["refresh"] = json!({"server": server["id"], "ok": true, "tools": server["tools"]});
+    }
+    save_state(inner);
+    tool_text(&result)
+}
+
+/// `call_tool`: the downstream call, simulated. The tool must be in the
+/// server's catalogue; a read-only server refuses a tool not classified read.
+/// The result echoes the call.
+fn proxy_call(inner: &mut Inner, args: &Value) -> Value {
+    let server = args["server"].as_str().unwrap_or_default();
+    let tool = args["tool"].as_str().unwrap_or_default();
+    let Some(entry) = inner.servers.iter_mut().find(|s| s["id"] == server) else {
+        return tool_error(&format!("Error: unknown server '{server}'"));
+    };
+    if entry["status"] != "active" {
+        return tool_error(&format!("Error: {server} is {}", cell(&entry["status"])));
+    }
+    let Some(class) = entry["tool_classes"]
+        .as_array()
+        .and_then(|list| list.iter().find(|t| t["name"] == tool))
+        .map(|t| t["classification"].clone())
+    else {
+        return tool_error(&format!("Error: {server} has no tool '{tool}'"));
+    };
+    if entry["access"] == "read_only" && class != "read" {
+        return tool_error(&format!(
+            "Error: policy denied {server}.{tool}: {server} is read-only"
+        ));
+    }
+    entry["last_call_at"] = json!(now_unix());
+    let payload =
+        json!({"server": server, "tool": tool, "classification": class, "args": args["args"]});
+    json!({"content": [{"type": "text", "text": payload.to_string()}]})
+}
+
+fn cell(value: &Value) -> String {
+    value
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| value.to_string())
+}
+
+fn admin_register(inner: &mut Inner, args: &Value) -> Value {
+    let url = args["url"].as_str().unwrap_or_default().to_string();
+    let host = match probe(&url) {
+        Ok(host) => host,
+        Err(refused) => return refused,
+    };
     let id = args["id"]
         .as_str()
         .map(str::to_string)
@@ -872,7 +1022,7 @@ fn admin_register(inner: &mut Inner, args: &Value) -> Value {
         "id": id, "name": id, "description": args["description"], "url": url, "tools": 2, "status": "active",
         "timeout_ms": timeout_ms, "health": "ok", "last_refresh_at": now, "last_error": null, "call_failures": 0,
         "last_call_error": null, "last_call_at": null, "access": "read_write", "scopes": format!("{id}:call"),
-        "tool_classes": tools,
+        "tool_classes": tools, "server_version": "1.0.0", "registered_by": inner.opts.email, "registered_at": now,
     }));
     inner
         .servers
@@ -936,7 +1086,13 @@ fn call(inner: &mut Inner, tool: &str, args: &Value, scope: &str, client_id: &st
             "sub": inner.opts.sub, "email": inner.opts.email, "name": inner.opts.name,
             "scopes": scope.split_whitespace().collect::<Vec<_>>(),
         })),
-        "health" => tool_text(&json!({"status": "ok", "servers": inner.servers.len()})),
+        "health" => {
+            let mut health = json!({"status": "ok", "servers": inner.servers.len()});
+            if !inner.opts.legacy {
+                health["build"] = json!({"version": BUILD_VERSION, "sha": BUILD_SHA, "built_at": "2026-10-01T12:00:00Z"});
+            }
+            tool_text(&health)
+        }
         "list_servers" => {
             let all = args
                 .get("include_inactive")
@@ -946,6 +1102,7 @@ fn call(inner: &mut Inner, tool: &str, args: &Value, scope: &str, client_id: &st
                 .get("include_tools")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            let legacy = inner.opts.legacy;
             let servers: Vec<Value> = inner
                 .servers
                 .iter()
@@ -957,6 +1114,11 @@ fn call(inner: &mut Inner, tool: &str, args: &Value, scope: &str, client_id: &st
                         map.retain(|k, _| !k.starts_with('_'));
                         if !with_tools {
                             map.remove("tool_classes");
+                        }
+                        if legacy {
+                            for key in ["server_version", "registered_by", "registered_at"] {
+                                map.remove(key);
+                            }
                         }
                     }
                     s
@@ -975,13 +1137,55 @@ fn call(inner: &mut Inner, tool: &str, args: &Value, scope: &str, client_id: &st
             let decision = args.get("decision").and_then(Value::as_str);
             tool_text(&policy_events(days, limit as usize, decision))
         }
-        "call_tool" => {
-            let server = args.get("server").and_then(Value::as_str).unwrap_or("");
-            if inner.servers.iter().any(|s| s["id"] == server) {
-                tool_error("Error: fake-gateway does not proxy tool calls")
-            } else {
-                tool_error(&format!("Error: unknown server '{server}'"))
+        "call_tool" => proxy_call(inner, args),
+        "update_server" => admin_update(inner, args),
+        "list_scope_owners" => {
+            let mut owners: Vec<Value> = inner
+                .servers
+                .iter()
+                .flat_map(|s| {
+                    let id = s["id"].clone();
+                    s["scopes"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .split_whitespace()
+                        .map(move |scope| json!({"scope": scope, "server": id}))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            owners.sort_by(|a, b| a["scope"].as_str().cmp(&b["scope"].as_str()));
+            tool_text(&json!({ "owners": owners }))
+        }
+        "list_connections" => {
+            let kind = args.get("kind").and_then(Value::as_str);
+            let connections: Vec<&Value> = inner
+                .connections
+                .iter()
+                .filter(|c| kind.is_none_or(|k| c["kind"] == k))
+                .collect();
+            tool_text(&json!({ "connections": connections }))
+        }
+        "revoke_user_access" => {
+            let Some(sub) = args["sub"].as_str().filter(|s| !s.is_empty()) else {
+                return tool_error("Error: sub is required");
+            };
+            let (mut grants, clients, tokens) = inner.users.remove(sub).unwrap_or_default();
+            if sub == inner.opts.sub {
+                for grant in inner.grants.iter_mut().filter(|g| !g.revoked) {
+                    grant.revoked = true;
+                    grants += 1;
+                }
+                inner.access.clear();
             }
+            let before = inner.connections.len();
+            inner
+                .connections
+                .retain(|c| !(c["subject"] == sub && c["kind"] == "okta_user"));
+            let removed = inner.connections.len() < before;
+            tool_text(
+                &json!({"sub": sub, "grants_revoked": grants, "clients": clients,
+                              "login_tokens_removed": tokens, "okta_user_connection_removed": removed}),
+            )
         }
         "register_server" => admin_register(inner, args),
         "unregister_server" => with_server(inner, args, |inner, i| {

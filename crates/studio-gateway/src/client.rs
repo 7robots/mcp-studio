@@ -16,7 +16,9 @@ use serde_json::{Value, json};
 use tokio::sync::{Mutex, OnceCell};
 use url::Url;
 
-use crate::model::{Identity, PolicyEvents, ServerList, UsageStats, Whoami};
+use crate::model::{
+    Connection, Health, Identity, PolicyEvents, ScopeOwner, ServerList, UsageStats, Whoami,
+};
 use crate::oauth::{self, ClientCache, ClientSpec, Metadata, OAuthError};
 use crate::profile::Profile;
 use crate::tokens::{TokenStore, Tokens};
@@ -39,6 +41,9 @@ pub enum GatewayError {
     /// A tool ran and reported failure (`isError`); the text is the gateway's.
     #[error("{0}")]
     Tool(String),
+    /// The gateway does not offer this tool to the caller (an older gateway).
+    #[error("{0} is not supported by this gateway")]
+    Unsupported(String),
     #[error("JSON-RPC error {code}: {message}")]
     Rpc { code: i64, message: String },
     #[error("HTTP {status}: {body}")]
@@ -316,23 +321,35 @@ impl Session {
     /// Calls a tool and decodes `content[0].text` as JSON (a plain string when it
     /// is not JSON). `isError` results become [`GatewayError::Tool`].
     pub async fn call_tool(&self, name: &str, arguments: Value) -> GatewayResult<Value> {
-        let result = self
-            .rpc("tools/call", json!({"name": name, "arguments": arguments}))
-            .await?;
+        let result = self.call_tool_raw(name, arguments).await?;
         let text = result
             .pointer("/content/0/text")
             .and_then(Value::as_str)
             .ok_or_else(|| {
                 GatewayError::Protocol(format!("tool {name} returned no text content"))
             })?;
+        Ok(serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.to_string())))
+    }
+
+    /// Calls a tool and returns its whole result; `isError` results become
+    /// [`GatewayError::Tool`] with their text.
+    pub async fn call_tool_raw(&self, name: &str, arguments: Value) -> GatewayResult<Value> {
+        let result = self
+            .rpc("tools/call", json!({"name": name, "arguments": arguments}))
+            .await?;
         if result
             .get("isError")
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            return Err(GatewayError::Tool(text.to_string()));
+            let text = result
+                .pointer("/content/0/text")
+                .and_then(Value::as_str)
+                .unwrap_or("the tool reported an error")
+                .to_string();
+            return Err(GatewayError::Tool(text));
         }
-        Ok(serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.to_string())))
+        Ok(result)
     }
 
     pub async fn list_tools(&self) -> GatewayResult<Vec<ToolInfo>> {
@@ -350,11 +367,72 @@ impl Session {
     pub async fn identity(&self) -> GatewayResult<Identity> {
         let (whoami, tools) = tokio::join!(self.whoami(), self.list_tools());
         let whoami = whoami?;
+        let tools: Vec<String> = tools?.into_iter().map(|t| t.name).collect();
         let admin = whoami.scopes.contains(&self.profile.admin_scope)
-            && tools?
-                .iter()
-                .any(|t| t.name == self.profile.admin_probe_tool);
-        Ok(Identity { whoami, admin })
+            && tools.contains(&self.profile.admin_probe_tool);
+        Ok(Identity {
+            whoami,
+            admin,
+            tools,
+        })
+    }
+
+    /// Whether `tools/list` offers this caller `tool`.
+    pub async fn supports(&self, tool: &str) -> GatewayResult<bool> {
+        Ok(self.list_tools().await?.iter().any(|t| t.name == tool))
+    }
+
+    /// Calls `tool` only if the gateway offers it, else
+    /// [`GatewayError::Unsupported`] (an older gateway).
+    pub async fn call_if_supported(&self, tool: &str, arguments: Value) -> GatewayResult<Value> {
+        if !self.supports(tool).await? {
+            return Err(GatewayError::Unsupported(tool.to_string()));
+        }
+        self.call_tool(tool, arguments).await
+    }
+
+    /// `health`, raw (scripts) and typed.
+    pub async fn health_raw(&self) -> GatewayResult<Value> {
+        self.call_tool("health", json!({})).await
+    }
+
+    /// `health`; a shape this client does not know reads as no build info.
+    pub async fn health(&self) -> GatewayResult<Health> {
+        Ok(serde_json::from_value(self.health_raw().await?).unwrap_or_default())
+    }
+
+    /// Which server claims each scope (`list_scope_owners`, admin).
+    pub async fn list_scope_owners(&self) -> GatewayResult<Vec<ScopeOwner>> {
+        let r = self
+            .call_if_supported("list_scope_owners", json!({}))
+            .await?;
+        decode("list_scope_owners", list_of(r, "owners"))
+    }
+
+    /// Stored downstream credentials' metadata (`list_connections`, admin);
+    /// `kind` narrows to one kind. Takes `{connections: [...]}` or a bare array.
+    pub async fn list_connections(&self, kind: Option<&str>) -> GatewayResult<Vec<Connection>> {
+        let mut args = json!({});
+        if let Some(kind) = kind {
+            args["kind"] = json!(kind);
+        }
+        let r = self.call_if_supported("list_connections", args).await?;
+        decode("list_connections", list_of(r, "connections"))
+    }
+
+    /// Calls `tool` on a registered server through the gateway's `call_tool`,
+    /// and returns the downstream tool's whole result.
+    pub async fn call_downstream(
+        &self,
+        server: &str,
+        tool: &str,
+        args: Value,
+    ) -> GatewayResult<Value> {
+        self.call_tool_raw(
+            "call_tool",
+            json!({"server": server, "tool": tool, "args": args}),
+        )
+        .await
     }
 
     pub async fn list_servers_raw(
@@ -431,6 +509,14 @@ fn issued_by(tokens: &Tokens, gateway: &Url) -> bool {
         .gateway
         .as_deref()
         .is_none_or(|g| g == gateway.as_str())
+}
+
+/// A list result given as `{key: [...]}` or as the bare array.
+fn list_of(value: Value, key: &str) -> Value {
+    match value {
+        Value::Array(_) => value,
+        other => other.get(key).cloned().unwrap_or(other),
+    }
 }
 
 fn decode<T: serde::de::DeserializeOwned>(tool: &str, value: Value) -> GatewayResult<T> {
@@ -556,6 +642,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ok, json!({"tools": []}));
+    }
+
+    #[test]
+    fn lists_come_wrapped_or_bare() {
+        let row = json!({"subject": "u1", "kind": "okta_user"});
+        let wrapped: Vec<crate::model::Connection> =
+            decode("x", list_of(json!({"connections": [row]}), "connections")).unwrap();
+        let bare: Vec<crate::model::Connection> =
+            decode("x", list_of(json!([row]), "connections")).unwrap();
+        assert_eq!(wrapped, bare);
+        assert_eq!(bare[0].kind.as_deref(), Some("okta_user"));
+        assert!(bare[0].expires_at.is_none());
     }
 
     #[test]

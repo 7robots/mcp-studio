@@ -124,6 +124,10 @@ pub struct GatewayServerInfo {
     pub last_refresh_at: Option<String>,
     #[serde(default)]
     pub last_error: Option<String>,
+    /// The version the server reported to the gateway; absent from an older
+    /// gateway.
+    #[serde(default)]
+    pub server_version: Option<String>,
 }
 
 /// The gateway registry, implemented outside this crate (by the gateway client).

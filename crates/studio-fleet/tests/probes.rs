@@ -244,6 +244,7 @@ impl GatewaySource for FakeGateway {
                 access: Some("public".into()),
                 auth_mode: Some("m2m".into()),
                 last_error: Some("upstream 502".into()),
+                server_version: Some("2.1.0".into()),
                 ..Default::default()
             }])
         })
@@ -520,6 +521,15 @@ async fn a_full_run_over_mocks_covers_every_source() {
     );
     assert_eq!(st(&r, "weather-mcp-worker", "gateway.status"), Status::Pass);
     assert_eq!(st(&r, "weather-mcp-worker", "gateway.health"), Status::Fail);
+    let weather = r
+        .servers
+        .iter()
+        .find(|s| s.name == "weather-mcp-worker")
+        .unwrap();
+    assert_eq!(
+        weather.facts.get("gateway.version").map(String::as_str),
+        Some("2.1.0")
+    );
     assert_eq!(
         st(&r, "tides-mcp-worker", "gateway.registered"),
         Status::Fail

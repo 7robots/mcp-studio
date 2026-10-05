@@ -18,12 +18,16 @@ pub fn now_unix() -> u64 {
 /// A timestamp as an age: `45s ago`, `12m ago`, `3h ago`, `2d ago`; `-` for none.
 pub fn ago(ts: Option<u64>, now: u64) -> String {
     let Some(ts) = ts else { return "-".into() };
-    let secs = now.saturating_sub(ts);
+    format!("{} ago", span(now.saturating_sub(ts)))
+}
+
+/// A duration in its largest whole unit: `45s`, `12m`, `3h`, `2d`.
+pub fn span(secs: u64) -> String {
     match secs {
-        0..60 => format!("{secs}s ago"),
-        60..3600 => format!("{}m ago", secs / 60),
-        3600..86400 => format!("{}h ago", secs / 3600),
-        _ => format!("{}d ago", secs / 86400),
+        0..60 => format!("{secs}s"),
+        60..3600 => format!("{}m", secs / 60),
+        3600..86400 => format!("{}h", secs / 3600),
+        _ => format!("{}d", secs / 86400),
     }
 }
 

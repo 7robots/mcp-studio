@@ -247,9 +247,121 @@ async fn delete_needs_the_id_typed_exactly() {
     assert!(h.row_with("│weather").is_none());
 }
 
+fn legacy() -> Options {
+    Options {
+        legacy: true,
+        ..Options::default()
+    }
+}
+
 #[tokio::test]
-async fn change_url_re_registers_and_restores_access() {
+async fn change_url_updates_in_place_when_the_gateway_offers_update_server() {
     let env = Env::new().await;
+    let mut h = ready(&env).await;
+    select(&mut h, "notes");
+    h.press("u");
+    h.erase(100);
+    h.type_text("https://notes2.mcp.example.org/mcp");
+    h.press("enter");
+    let text = h.text();
+    assert!(text.contains("Updates it in place"), "{text}");
+    h.type_text("notes");
+    h.press("enter");
+    finish_action(&mut h).await;
+    let text = h.text();
+    assert!(
+        text.contains(
+            "notes: url https://notes.mcp.example.org/mcp -> https://notes2.mcp.example.org/mcp; refreshed, 5 tools"
+        ),
+        "{text}"
+    );
+    assert_eq!(called(&env, "update_server"), 1);
+    assert_eq!(called(&env, "unregister_server"), 0);
+    assert_eq!(called(&env, "register_server"), 0);
+    select(&mut h, "notes");
+    let text = h.text();
+    assert!(
+        text.contains("https://notes2.mcp.example.org/mcp"),
+        "{text}"
+    );
+    // Nothing else was touched: classifications, access and timeout stay.
+    assert!(text.contains("(2 of 5 tools callable)"), "{text}");
+    assert!(h.row_with("│notes").unwrap().contains("RO"));
+    assert!(text.contains("30000 ms"));
+}
+
+#[tokio::test]
+async fn a_failed_probe_through_update_server_changes_nothing() {
+    let env = Env::new().await;
+    let mut h = ready(&env).await;
+    select(&mut h, "tasks");
+    h.press("u");
+    h.erase(100);
+    h.type_text("https://fail.example.org/mcp");
+    h.press("enter");
+    h.type_text("tasks");
+    h.press("enter");
+    finish_action(&mut h).await;
+    let text = h.text();
+    assert!(
+        text.contains("Refused: Error: probe failed: fail.example.org answered HTTP 502"),
+        "{text}"
+    );
+    assert_eq!(called(&env, "unregister_server"), 0);
+    select(&mut h, "tasks");
+    assert!(h.text().contains("https://tasks.mcp.example.org/mcp"));
+}
+
+#[tokio::test]
+async fn edit_details_through_update_server() {
+    let env = Env::new().await;
+    let mut h = ready(&env).await;
+    select(&mut h, "tasks");
+    h.press("e");
+    assert!(h.text().contains("Details of tasks"), "{}", h.text());
+    h.press("enter");
+    assert!(h.text().contains("nothing changed"), "{}", h.text());
+    h.erase(20);
+    h.type_text("Team tasks");
+    h.press("tab");
+    h.erase(40);
+    h.type_text("Shared task lists");
+    h.press("enter");
+    finish_action(&mut h).await;
+    let text = h.text();
+    assert!(
+        text.contains(
+            "tasks: description Task lists -> Shared task lists; display_name Tasks -> Team tasks"
+        ),
+        "{text}"
+    );
+    select(&mut h, "tasks");
+    let text = h.text();
+    assert!(
+        text.contains("Team tasks") && text.contains("Shared task lists"),
+        "{text}"
+    );
+    assert!(h.text().contains("15000 ms"));
+}
+
+#[tokio::test]
+async fn edit_details_is_refused_up_front_on_an_older_gateway() {
+    let env = Env::with(legacy()).await;
+    let mut h = ready(&env).await;
+    select(&mut h, "tasks");
+    h.press("e");
+    assert!(gw(&h.app).overlay().is_none());
+    assert!(
+        h.text()
+            .contains("Editing details needs update_server, which this gateway does not offer"),
+        "{}",
+        h.text()
+    );
+}
+
+#[tokio::test]
+async fn legacy_change_url_re_registers_and_restores_access() {
+    let env = Env::with(legacy()).await;
     let mut h = ready(&env).await;
     select(&mut h, "notes");
     h.press("u");
@@ -284,8 +396,8 @@ async fn change_url_re_registers_and_restores_access() {
 }
 
 #[tokio::test]
-async fn a_refused_url_change_puts_the_old_registration_back() {
-    let env = Env::new().await;
+async fn legacy_a_refused_url_change_puts_the_old_registration_back() {
+    let env = Env::with(legacy()).await;
     let mut h = ready(&env).await;
     select(&mut h, "tasks");
     h.press("u");

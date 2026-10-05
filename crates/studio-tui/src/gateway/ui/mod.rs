@@ -2,7 +2,9 @@
 //! the screen tabs; then the current screen, or the sign-in state instead of
 //! it; then any open overlay.
 
+mod connections;
 mod policy;
+mod scopes;
 mod servers;
 mod usage;
 
@@ -10,10 +12,11 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Paragraph};
 
 use crate::framework::widgets::message;
 
-use super::pane::{Pane, Screen};
+use super::pane::{Pane, Screen, Viewer};
 
 /// `position` is `(index, count)` of the pane among the module's gateways.
 pub fn draw(frame: &mut Frame, pane: &Pane, area: Rect, position: (usize, usize)) {
@@ -43,15 +46,13 @@ pub fn draw(frame: &mut Frame, pane: &Pane, area: Rect, position: (usize, usize)
             Line::from("(Or run `mcp-studio gateway login` in a shell.)").dim(),
         ];
         message(frame, body, lines);
+    } else if let Some(viewer) = &pane.viewer {
+        draw_viewer(frame, viewer, body);
     } else {
         match pane.screen {
             Screen::Servers => servers::draw(frame, pane, body),
-            Screen::Usage | Screen::Policy if pane.admin() == Some(false) => {
-                let tool = if pane.screen == Screen::Usage {
-                    "usage_stats"
-                } else {
-                    "policy_events"
-                };
+            screen if pane.admin() == Some(false) => {
+                let tool = screen.tool();
                 message(
                     frame,
                     body,
@@ -68,8 +69,25 @@ pub fn draw(frame: &mut Frame, pane: &Pane, area: Rect, position: (usize, usize)
                     ],
                 );
             }
+            screen if pane.offers(screen.tool()) == Some(false) => message(
+                frame,
+                body,
+                vec![
+                    Line::from(format!(
+                        "{} is not supported by this gateway.",
+                        screen.title()
+                    )),
+                    Line::from(format!(
+                        "It needs the {} tool, which a newer gateway offers.",
+                        screen.tool()
+                    ))
+                    .dim(),
+                ],
+            ),
             Screen::Usage => usage::draw(frame, pane, body),
             Screen::Policy => policy::draw(frame, pane, body),
+            Screen::Scopes => scopes::draw(frame, pane, body),
+            Screen::Connections => connections::draw(frame, pane, body),
         }
     }
     if let Some(overlay) = pane.overlay() {
@@ -83,6 +101,9 @@ fn draw_header(frame: &mut Frame, pane: &Pane, area: Rect, (index, count): (usiz
         spans.push(Span::from(format!("({}/{count}) ", index + 1)).dim());
     }
     spans.push(Span::from(pane.host()).dim());
+    if let Some(build) = pane.build() {
+        spans.push(Span::from(format!(" build {}", build.label())).dim());
+    }
     spans.push(Span::from("  "));
     match &pane.identity.data {
         Some(identity) => {
@@ -126,4 +147,31 @@ fn draw_header(frame: &mut Frame, pane: &Pane, area: Rect, (index, count): (usiz
         Layout::horizontal([Constraint::Min(0), Constraint::Length(width)]).areas(area);
     frame.render_widget(Line::from(spans), left);
     frame.render_widget(Line::from(tabs), right);
+}
+
+/// A console result, scrolled to `viewer.scroll`.
+fn draw_viewer(frame: &mut Frame, viewer: &Viewer, area: Rect) {
+    let total = viewer.lines.len();
+    let lines: Vec<Line> = viewer
+        .lines
+        .iter()
+        .skip(viewer.scroll)
+        .map(|l| {
+            let line = Line::from(l.clone());
+            if viewer.error {
+                line.fg(Color::Red)
+            } else {
+                line
+            }
+        })
+        .collect();
+    let title = format!(
+        " {}  ({}/{total}) ",
+        viewer.title,
+        (viewer.scroll + 1).min(total)
+    );
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::bordered().title(title)),
+        area,
+    );
 }

@@ -171,6 +171,17 @@ fn draw_detail(frame: &mut Frame, s: &Server, drift: Option<&ScopeDrift>, area: 
             Span::from("  (scope drift; A to approve)").dim(),
         ]));
     }
+    if let Some(version) = &s.server_version {
+        lines.push(field("version", version.clone()));
+    }
+    if s.registered_by.is_some() || s.registered_at.is_some() {
+        let by = s.registered_by.as_deref().unwrap_or("?");
+        let value = match s.registered_at {
+            Some(at) => format!("{} by {by}", ago(Some(at), now)),
+            None => format!("by {by}"),
+        };
+        lines.push(field("registered", value));
+    }
     lines.push(field("refreshed", ago(s.last_refresh_at, now)));
     lines.push(field("last call", ago(s.last_call_at, now)));
     if s.call_failures > 0 {

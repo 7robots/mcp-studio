@@ -346,7 +346,8 @@ pub async fn run(config: GateConfig) -> Result<(), String> {
     g.h.press("enter");
     let toast = g.action_result("change the URL").await?;
     g.check(
-        toast.contains("moved to") && !toast.contains("could not restore"),
+        // update_server's "url <old> -> <new>", or the composite's "moved to <new>".
+        toast.contains(alt_url.as_str()) && !toast.contains("could not restore"),
         "moved, with nothing lost",
     )?;
     let moved = g.fixture();

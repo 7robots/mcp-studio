@@ -1,6 +1,8 @@
 //! The Gateway module: the gateway's registry (Servers), `usage_stats`
-//! (Usage) and `policy_events` (Policy), and the nine admin actions on the
-//! Servers screen for an admin sign-in.
+//! (Usage), `policy_events` (Policy), `list_scope_owners` (Scopes) and
+//! `list_connections` (Connections); the admin actions on the Servers screen
+//! for an admin sign-in, revoking a user on Connections, and a `call_tool`
+//! console for anyone signed in.
 //!
 //! One [`pane::Pane`] per `[[gateway]]`, each with its own session and state;
 //! with more than one, `p` opens a picker. A missing or expired sign-in is
@@ -193,7 +195,10 @@ impl Component for GatewayModule {
     }
 
     fn captures_input(&self) -> bool {
-        self.picker.is_some() || self.pane().is_some_and(|p| p.overlay.is_some())
+        self.picker.is_some()
+            || self
+                .pane()
+                .is_some_and(|p| p.overlay.is_some() || p.viewer.is_some())
     }
 
     fn status(&self) -> Option<String> {
@@ -202,6 +207,8 @@ impl Component for GatewayModule {
             Screen::Servers => pane.servers.loaded_at,
             Screen::Usage => pane.usage.loaded_at,
             Screen::Policy => pane.policy.loaded_at,
+            Screen::Scopes => pane.scopes.loaded_at,
+            Screen::Connections => pane.connections.loaded_at,
         }?;
         Some(format!("updated {}", ago(Some(at), now_unix())))
     }
