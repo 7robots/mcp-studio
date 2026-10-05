@@ -1,5 +1,6 @@
 [package]
 name = "studio-fake"
+description = "MCP Studio: an in-process fake MCP gateway for tests and the demo"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,5 +8,15 @@ license.workspace = true
 [lints]
 workspace = true
 
+[[bin]]
+name = "studio-fake-gateway"
+path = "src/bin/studio_fake_gateway.rs"
+
 [dependencies]
-studio-core.workspace = true
+studio-gateway.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+url.workspace = true
