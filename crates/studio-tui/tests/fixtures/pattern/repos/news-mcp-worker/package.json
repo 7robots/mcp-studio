@@ -1,0 +1,7 @@
+{
+  "name": "news-mcp-worker",
+  "scripts": { "ci": "npm run conformance && vitest" },
+  "dependencies": { "hono": "4.13.13", "zod": "^4.0.0" },
+  "devDependencies": { "vitest": "4.1.11" },
+  "overrides": { "miniflare": "5.1.0" }
+}

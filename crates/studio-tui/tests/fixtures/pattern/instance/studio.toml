@@ -1,0 +1,19 @@
+[instance]
+name = "acme"
+display_name = "Acme test fleet"
+
+[pattern]
+pack = "tiny-ts"
+source = "../pack"
+values = "pattern-values.toml"
+conformance_dir = "conformance"
+
+[fleet]
+repos_dir = "../repos"
+include = ["acme/weather-mcp-worker"]
+
+[[fleet.server]]
+repo = "acme/weather-mcp-worker"
+
+[[fleet.server]]
+repo = "acme/news-mcp-worker"

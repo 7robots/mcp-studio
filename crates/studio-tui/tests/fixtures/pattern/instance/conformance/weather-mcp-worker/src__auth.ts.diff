@@ -1,0 +1,9 @@
+--- template/src/auth.ts
++++ weather-mcp-worker/src/auth.ts
+@@ -1,5 +1,5 @@
+ // auth for mcp.acme.example
+ export const GATEWAY = "https://gateway.mcp.acme.example";
+ export function audienceOk(aud: string): boolean {
+-  return aud === GATEWAY;
++  return aud === GATEWAY && aud.length > 0; // weather: stricter
+ }

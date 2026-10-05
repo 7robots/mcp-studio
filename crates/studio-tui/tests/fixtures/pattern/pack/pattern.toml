@@ -1,0 +1,42 @@
+# A tiny pack for the Pattern module's tests.
+
+[pack]
+name = "tiny-ts"
+version = "2026-02-01.1"
+description = "A tiny test pack: two security files and a skill"
+
+[pins]
+"hono" = "4.13.13"
+
+[dev_pins]
+"vitest" = "4.1.11"
+
+[overrides]
+"miniflare" = "5.1.0"
+
+[majors]
+"zod" = 4
+
+[forbidden]
+dependencies = ["agents"]
+legacy_markers = ["McpAgent"]
+
+[security]
+files = ["src/auth.ts", "src/index.ts"]
+
+[required]
+files = ["conformance.json", "src/mcp.ts"]
+[required.scripts]
+ci = "npm run conformance"
+
+[wrangler]
+main = "src/index.ts"
+compatibility_flags = ["nodejs_compat"]
+min_compatibility_date = "2026-05-01"
+required_vars = ["PUBLIC_MCP_URL"]
+required_kv_bindings = ["OAUTH_KV"]
+
+[variables]
+domain_suffix = "Hostname suffix of every server"
+gateway_host = "Hostname of the gateway"
+api_token = "A token-looking value the overview must never show"

@@ -1,0 +1,8 @@
+{
+  "comment": "Security-scaffold conformance. Do not hand-edit: bless changes with `mcp-studio pattern bless`. CI fails when a listed file changes without a re-bless.",
+  "scaffold_version": "2026-02-01.1",
+  "files": {
+    "src/auth.ts": "9068aba03b66069413225d5a026d5d3418225be2419fa3c4f9606778d60e4b70",
+    "src/index.ts": "3a926f592538edc4d906afe307b58c0eb3feb83aaf469bcd12846044f4eaef55"
+  }
+}
