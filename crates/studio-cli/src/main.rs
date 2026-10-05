@@ -21,6 +21,9 @@ struct Cli {
     /// then default_instance in ~/.config/mcp-studio/config.toml.
     #[arg(long, global = true)]
     instance: Option<PathBuf>,
+    /// Open the TUI against an in-process fake gateway (no instance, no sign-in).
+    #[arg(long)]
+    demo: bool,
     #[command(subcommand)]
     cmd: Option<Cmd>,
 }
@@ -64,7 +67,7 @@ async fn main() -> std::process::ExitCode {
         instance_arg: cli.instance,
     };
     let result = match cli.cmd {
-        None => cmd_gateway::tui(&ctx, false).await,
+        None => cmd_gateway::tui(&ctx, cli.demo).await,
         Some(Cmd::Config(c)) => cmd_config::run(c, &ctx).await,
         Some(Cmd::Gateway(c)) => cmd_gateway::run(c, &ctx).await,
         Some(Cmd::Pattern(c)) => cmd_pattern::run(c, &ctx).await,

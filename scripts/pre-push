@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Install: ln -s ../../scripts/pre-push .git/hooks/pre-push
+# Refuses a push that would publish an org-specific value. Instances to check
+# come from $MCP_STUDIO_NEUTRAL_INSTANCES (colon-separated) or the default
+# instance in ~/.config/mcp-studio/config.toml.
+set -eu
+root="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -n "${MCP_STUDIO_NEUTRAL_INSTANCES:-}" ]; then
+  IFS=: read -r -a insts <<< "$MCP_STUDIO_NEUTRAL_INSTANCES"
+else
+  cfg="${XDG_CONFIG_HOME:-$HOME/.config}/mcp-studio/config.toml"
+  inst="$(sed -nE 's/^default_instance *= *"(.*)"/\1/p' "$cfg" 2>/dev/null | head -1)"
+  [ -n "$inst" ] || { echo "pre-push: no instance to check against; set MCP_STUDIO_NEUTRAL_INSTANCES" >&2; exit 1; }
+  insts=("${inst/#\~/$HOME}")
+fi
+exec "$root/scripts/check-neutral.sh" "${insts[@]}"
