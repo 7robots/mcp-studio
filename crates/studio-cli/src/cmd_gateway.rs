@@ -543,6 +543,11 @@ pub async fn tui(ctx: &Ctx, demo: bool) -> Result<()> {
     }
     let inst = ctx.instance()?;
     let env = Env::from_process(false);
+    if env.token_file.is_none() && !inst.config.gateways.is_empty() {
+        // The stored sign-in is read before the screen opens; the first run
+        // also copies an mcpgw-manager sign-in, which macOS asks to allow.
+        eprintln!("Reading the gateway sign-in from the Keychain (macOS may ask to allow access)...");
+    }
     let sessions = inst
         .config
         .gateways
