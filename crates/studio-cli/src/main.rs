@@ -13,6 +13,7 @@ mod cmd_fleet;
 mod cmd_gateway;
 mod cmd_marketplace;
 mod cmd_pattern;
+mod cmd_server;
 mod wiring;
 
 #[derive(Parser)]
@@ -43,6 +44,9 @@ enum Cmd {
     /// Fleet status across every probe source.
     #[command(subcommand)]
     Fleet(cmd_fleet::Cmd),
+    /// One server: scaffold a new one, or plan what it still needs.
+    #[command(subcommand)]
+    Server(cmd_server::Cmd),
     /// Claude Code and Codex plugin marketplaces.
     #[command(subcommand)]
     Marketplace(cmd_marketplace::Cmd),
@@ -73,6 +77,7 @@ async fn main() -> std::process::ExitCode {
         Some(Cmd::Gateway(c)) => cmd_gateway::run(c, &ctx).await,
         Some(Cmd::Pattern(c)) => cmd_pattern::run(c, &ctx).await,
         Some(Cmd::Fleet(c)) => cmd_fleet::run(c, &ctx).await,
+        Some(Cmd::Server(c)) => cmd_server::run(c, &ctx).await,
         Some(Cmd::Marketplace(c)) => cmd_marketplace::run(c, &ctx).await,
     };
     match result {

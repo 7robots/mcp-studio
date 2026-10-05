@@ -3224,6 +3224,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "futures",
  "serde",
  "serde_json",
  "studio-core",
@@ -3347,7 +3348,10 @@ dependencies = [
  "serde_json",
  "studio-core",
  "studio-fake",
+ "studio-fleet",
  "studio-gateway",
+ "studio-marketplace",
+ "studio-pattern",
  "tempfile",
  "tokio",
  "unicode-width",

@@ -42,9 +42,15 @@ pub struct StatusArgs {
 }
 
 pub async fn run(cmd: Cmd, ctx: &Ctx) -> Result<()> {
-    let checker = crate::wiring::PatternChecker::from_instance(&ctx.instance()?)?
+    let inst = ctx.instance()?;
+    let checker = crate::wiring::PatternChecker::from_instance(&inst)?
         .map(|c| Box::new(c) as Box<dyn RepoChecker>);
-    run_with(cmd, ctx, None, checker).await
+    let gateway = (!inst.config.gateways.is_empty()).then(|| {
+        crate::cmd_gateway::sessions(&inst)
+            .map(|s| Box::new(crate::wiring::GatewayRegistry::new(s)) as Box<dyn GatewaySource>)
+    });
+    let gateway = gateway.transpose()?;
+    run_with(cmd, ctx, gateway, checker).await
 }
 
 /// The hook point for wiring the gateway registry and pattern conformance.

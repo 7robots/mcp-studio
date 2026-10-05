@@ -11,6 +11,9 @@ workspace = true
 [dependencies]
 studio-core.workspace = true
 studio-gateway.workspace = true
+studio-fleet.workspace = true
+studio-pattern.workspace = true
+studio-marketplace.workspace = true
 studio-fake.workspace = true
 anyhow.workspace = true
 crossterm.workspace = true

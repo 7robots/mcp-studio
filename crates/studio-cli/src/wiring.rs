@@ -38,3 +38,53 @@ impl RepoChecker for PatternChecker {
         }
     }
 }
+
+/// The gateway registry for the fleet's `gateway` source, through the signed-in
+/// sessions. A gateway with no stored sign-in reports an error (the source
+/// then skips) rather than starting a browser login.
+pub struct GatewayRegistry {
+    sessions: Vec<(String, std::sync::Arc<studio_gateway::client::Session>)>,
+}
+
+impl GatewayRegistry {
+    pub fn new(sessions: Vec<(String, std::sync::Arc<studio_gateway::client::Session>)>) -> Self {
+        Self { sessions }
+    }
+}
+
+impl studio_fleet::GatewaySource for GatewayRegistry {
+    fn list_servers<'a>(
+        &'a self,
+        gateway: &'a studio_core::config::GatewayConfig,
+    ) -> futures::future::BoxFuture<'a, Result<Vec<studio_fleet::GatewayServerInfo>, String>> {
+        Box::pin(async move {
+            let Some((_, session)) = self.sessions.iter().find(|(id, _)| *id == gateway.id) else {
+                return Err(format!("no session for gateway {}", gateway.id));
+            };
+            if session.tokens().await.is_none() {
+                return Err(format!(
+                    "not signed in to gateway {}: run `mcp-studio gateway login`",
+                    gateway.id
+                ));
+            }
+            let servers = session
+                .list_servers(true, false)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(servers
+                .servers
+                .into_iter()
+                .map(|s| studio_fleet::GatewayServerInfo {
+                    id: s.id,
+                    url: Some(s.url),
+                    status: Some(s.status),
+                    health: Some(s.health),
+                    access: s.access,
+                    auth_mode: s.auth_mode,
+                    last_refresh_at: s.last_refresh_at.map(|t| t.to_string()),
+                    last_error: s.last_error,
+                })
+                .collect())
+        })
+    }
+}

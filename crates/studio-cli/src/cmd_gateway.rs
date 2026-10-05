@@ -524,6 +524,17 @@ async fn execute(
     Ok(())
 }
 
+/// One session per configured gateway, keyed by gateway id, for the other
+/// modules (fleet status reads the registry through these).
+pub(crate) fn sessions(inst: &Instance) -> Result<Vec<(String, Arc<Session>)>> {
+    let env = Env::from_process(false);
+    inst.config
+        .gateways
+        .iter()
+        .map(|g| Ok((g.id.clone(), Arc::new(env.session(inst, g)?))))
+        .collect()
+}
+
 /// The TUI (default when no subcommand is given). `demo` runs it against an
 /// in-process fake gateway and needs no instance.
 pub async fn tui(ctx: &Ctx, demo: bool) -> Result<()> {
