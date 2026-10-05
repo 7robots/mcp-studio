@@ -14,6 +14,7 @@ mod cmd_gateway;
 mod cmd_marketplace;
 mod cmd_pattern;
 mod cmd_server;
+mod plan;
 mod wiring;
 
 #[derive(Parser)]

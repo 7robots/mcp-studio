@@ -11,6 +11,7 @@ pub mod difflib;
 pub mod lint;
 pub mod manifest;
 pub mod pack;
+pub mod scaffold;
 
 use std::path::Path;
 
@@ -20,6 +21,7 @@ pub use conformance::{BlessOptions, BlessOutcome, Conformance, ConformanceError,
 pub use lint::lint_repo;
 pub use manifest::Manifest;
 pub use pack::{FileTree, Pack, PackError, RenderedFile, Values, install_skill};
+pub use scaffold::{ScaffoldError, ScaffoldSpec, ScaffoldSummary, render_scaffold, scaffold};
 
 /// Conformance (`pattern.version`, `pattern.hashes`, `pattern.drift`) plus
 /// every static lint rule, for one repo. The repo's name — the store's
