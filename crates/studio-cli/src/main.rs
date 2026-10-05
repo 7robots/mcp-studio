@@ -13,6 +13,7 @@ mod cmd_fleet;
 mod cmd_gateway;
 mod cmd_marketplace;
 mod cmd_pattern;
+mod wiring;
 
 #[derive(Parser)]
 #[command(name = "mcp-studio", version, about)]
