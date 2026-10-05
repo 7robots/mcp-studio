@@ -1,0 +1,8 @@
+{
+  "name": "acme-plugin-marketplace",
+  "owner": { "name": "Acme" },
+  "plugins": [
+    { "name": "weather-mcp-worker", "source": "./servers/weather-mcp-worker", "version": "1.2.0" },
+    { "name": "acme-tides", "source": "./servers/acme-tides", "version": "0.2.0" }
+  ]
+}

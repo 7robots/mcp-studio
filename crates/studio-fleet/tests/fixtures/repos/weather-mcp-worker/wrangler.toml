@@ -1,0 +1,7 @@
+name = "weather-mcp-worker"
+main = "src/index.ts"
+routes = [{ pattern = "weather.mcp.acme.example", custom_domain = true }]
+
+[vars]
+OKTA_M2M_SCOPE = "weather:read"
+PUBLIC_MCP_URL = "https://weather.mcp.acme.example/mcp"

@@ -1,0 +1,30 @@
+# Fixture instance for studio-fleet tests (fictional "acme" org).
+[instance]
+name = "acme-fleet-test"
+
+[github]
+account = "acme-bot"
+orgs = ["acme"]
+
+[[gateway]]
+id = "main"
+url = "https://gateway.mcp.acme.example"
+
+[fleet]
+repos_dir = "../repos"
+include = ["acme/weather-mcp-worker", "acme/retired-mcp-worker"]
+exclude = ["acme/retired-mcp-worker"]
+
+[[fleet.server]]
+repo = "acme/weather-mcp-worker"
+
+[[fleet.server]]
+repo = "acme/tides-mcp-worker"
+gateway_id = "tide"
+environments = ["staging"]
+marketplace_slug = "acme-tides"
+
+[[marketplace]]
+id = "acme"
+repo = "acme/acme-plugin-marketplace"
+owner_name = "Acme"

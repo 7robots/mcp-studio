@@ -1,0 +1,7 @@
+{
+  "name": "acme-plugin-marketplace",
+  "interface": { "displayName": "Acme" },
+  "plugins": [
+    { "name": "acme-tides", "source": "./servers/acme-tides", "policy": { "installation": "AVAILABLE" } }
+  ]
+}

@@ -1,0 +1,25 @@
+# No PUBLIC_MCP_URL: the URL comes from the custom domain.
+name = "tides-mcp-worker"
+main = "src/index.ts"
+
+routes = [
+  { pattern = "tides.mcp.acme.example", custom_domain = true },
+  "acme.example/tides/*",
+]
+
+[vars]
+OKTA_M2M_SCOPE = "tides:read, tides:write"
+
+[env.staging]
+workers_dev = true
+
+[env.staging.vars]
+OKTA_M2M_SCOPE = "mcp:read"
+PUBLIC_MCP_URL = "https://tides-staging.mcp.acme.example/mcp"
+
+[[env.staging.routes]]
+pattern = "tides-staging.mcp.acme.example"
+custom_domain = true
+
+[env.dev]
+name = "tides-dev"
