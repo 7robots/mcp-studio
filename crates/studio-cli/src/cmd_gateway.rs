@@ -549,8 +549,35 @@ pub async fn tui(ctx: &Ctx, demo: bool) -> Result<()> {
         .iter()
         .map(|g| env.session(&inst, g).map(Arc::new))
         .collect::<Result<Vec<_>>>()?;
-    let module = GatewayModule::new(sessions, env.opener.clone());
-    let (app, rx) = studio_tui::studio_app(inst.display_name(), module);
+    let gateway_module = GatewayModule::new(sessions.clone(), env.opener.clone());
+
+    // The fleet's probes read the registry through the same sessions, and
+    // pattern conformance through the instance's pack.
+    let ids: Vec<String> = inst.config.gateways.iter().map(|g| g.id.clone()).collect();
+    let registry = crate::wiring::GatewayRegistry::new(ids.into_iter().zip(sessions).collect());
+    let checker = crate::wiring::PatternChecker::from_instance(&inst)?;
+    let providers = studio_fleet::Providers::new(
+        (!inst.config.gateways.is_empty())
+            .then(|| Box::new(registry) as Box<dyn studio_fleet::GatewaySource>),
+        checker.map(|c| Box::new(c) as Box<dyn studio_fleet::RepoChecker>),
+    );
+
+    let title = inst.display_name().to_string();
+    let inst = Arc::new(inst);
+    let modules = studio_tui::Modules {
+        fleet: Some(Box::new(studio_tui::fleet::FleetModule::new(
+            inst.clone(),
+            providers,
+        ))),
+        pattern: Some(Box::new(studio_tui::pattern::PatternModule::new(
+            inst.clone(),
+        ))),
+        gateway: Some(Box::new(gateway_module)),
+        marketplaces: Some(Box::new(studio_tui::marketplace::MarketplaceModule::new(
+            inst,
+        ))),
+    };
+    let (app, rx) = studio_tui::studio_shell(title, modules, None);
     studio_tui::run(app, rx).await
 }
 
