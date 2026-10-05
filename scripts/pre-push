@@ -4,7 +4,7 @@
 # come from $MCP_STUDIO_NEUTRAL_INSTANCES (colon-separated) or the default
 # instance in ~/.config/mcp-studio/config.toml.
 set -eu
-root="$(cd "$(dirname "$0")/.." && pwd)"
+root="$(git rev-parse --show-toplevel)"
 if [ -n "${MCP_STUDIO_NEUTRAL_INSTANCES:-}" ]; then
   IFS=: read -r -a insts <<< "$MCP_STUDIO_NEUTRAL_INSTANCES"
 else
